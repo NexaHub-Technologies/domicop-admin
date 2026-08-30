@@ -1,30 +1,13 @@
 import { authedRequest } from "../http"
 import type { Member } from "../types/auth"
 import type {
-  UpdateMemberInput,
   AdminUpdateMemberInput,
   CreateMemberInput,
   PaginatedMembersResponse,
-  SecurityInfo,
   MemberStatement,
 } from "../types/members"
 
 export const membersApi = {
-  getMe: async (): Promise<Member> => {
-    return authedRequest<Member>("/v1/members/me")
-  },
-
-  updateMe: async (data: UpdateMemberInput): Promise<Member> => {
-    return authedRequest<Member>("/v1/members/me", {
-      method: "PATCH",
-      body: data,
-    })
-  },
-
-  getMySecurity: async (): Promise<SecurityInfo> => {
-    return authedRequest<SecurityInfo>("/v1/members/me/security")
-  },
-
   list: async (params?: {
     page?: number
     limit?: number
@@ -60,6 +43,14 @@ export const membersApi = {
     })
   },
 
+  /**
+   * Every member awaiting approval, oldest first — the whole queue, not a page
+   * of it.
+   *
+   * `list()` is paginated, so counting or filtering pending members from it
+   * only ever sees the current 25 rows. This endpoint is unpaginated by
+   * design: the queue is meant to be worked through and drained.
+   */
   getPendingApplications: async (): Promise<Member[]> => {
     return authedRequest<Member[]>("/v1/members/applications/pending")
   },

@@ -1,4 +1,5 @@
 import { session } from "./session"
+import { endSession } from "./auth-storage"
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL
 
@@ -133,7 +134,12 @@ export async function authedRequest<T>(
   options: Omit<RequestOptions, "token"> = {},
 ): Promise<T> {
   const token = await session.getToken()
-  if (!token) throw new ApiError(401, "Not authenticated")
+  if (!token) {
+    // No token but possibly still a stored identity — the zombie state. End the
+    // session properly so the route guard stops admitting them.
+    await endSession()
+    throw new ApiError(401, "Not authenticated")
+  }
 
   try {
     const result = await request<T>(path, { ...options, token })
@@ -150,7 +156,9 @@ export async function authedRequest<T>(
     const refreshed = await refreshPromise
 
     if (!refreshed) {
-      await session.clearTokens()
+      // The refresh token is spent. Tear down BOTH halves of the session, not
+      // just the tokens — see endSession().
+      await endSession()
       throw err
     }
 

@@ -20,11 +20,6 @@ export interface MessageReply {
   created_at: string
 }
 
-export interface CreateMessageInput {
-  subject: string
-  body: string
-}
-
 export interface ReplyToMessageInput {
   body: string
 }

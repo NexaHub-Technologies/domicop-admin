@@ -4,7 +4,12 @@ export interface Dividend {
   amount: number // naira
   year: number
   paystack_transfer_ref: string | null
-  status: "processing" | "success" | "failed"
+  /**
+   * Per the CHECK constraint in 20240601_initial_schema.sql. `pending` is the
+   * column default — it was missing here, so every newly created dividend fell
+   * outside the type and rendered without a status style.
+   */
+  status: "pending" | "processing" | "success" | "failed"
   created_at: string
   profiles: {
     full_name: string

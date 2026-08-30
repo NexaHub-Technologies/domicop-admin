@@ -3,28 +3,10 @@ import type {
   Contribution,
   GetContributionsParams,
   ContributionListResponse,
-  CreateContributionInput,
   UpdateContributionStatusInput,
 } from "../types/contributions"
 
 export const contributionsApi = {
-  getMyContributions: async (
-    params?: GetContributionsParams,
-  ): Promise<ContributionListResponse> => {
-    const queryParams = new URLSearchParams()
-
-    if (params?.year) queryParams.append("year", params.year.toString())
-    if (params?.month) queryParams.append("month", params.month)
-    if (params?.page) queryParams.append("page", params.page.toString())
-    if (params?.limit) queryParams.append("limit", params.limit.toString())
-
-    const query = queryParams.toString() ? `?${queryParams.toString()}` : ""
-
-    return authedRequest<ContributionListResponse>(
-      `/v1/contributions/me${query}`,
-    )
-  },
-
   list: async (
     params?: GetContributionsParams,
   ): Promise<ContributionListResponse> => {
@@ -41,17 +23,6 @@ export const contributionsApi = {
     return authedRequest<ContributionListResponse>(
       `/v1/contributions/${query}`,
     )
-  },
-
-  getById: async (id: string): Promise<Contribution> => {
-    return authedRequest<Contribution>(`/v1/contributions/${id}`)
-  },
-
-  create: async (data: CreateContributionInput): Promise<Contribution> => {
-    return authedRequest<Contribution>("/v1/contributions/", {
-      method: "POST",
-      body: data,
-    })
   },
 
   updateStatus: async (

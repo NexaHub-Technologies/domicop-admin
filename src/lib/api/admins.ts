@@ -20,6 +20,22 @@ export const adminsApi = {
   },
 
   // DELETE /admins/:id → 204. Cannot revoke yourself → 400.
+  /**
+   * Assign or clear a cooperative office. Pass null to clear.
+   *
+   * At most one holder per office, so reassigning means clearing the incumbent
+   * first — the server answers 409 otherwise.
+   */
+  setOffice: async (
+    id: string,
+    officer_role: "secretary" | "president" | null,
+  ): Promise<AdminProfile> => {
+    return authedRequest<AdminProfile>(`/v1/admins/${id}/office`, {
+      method: "PATCH",
+      body: { officer_role },
+    })
+  },
+
   revoke: async (id: string): Promise<void> => {
     await authedRequest(`/v1/admins/${id}`, { method: "DELETE" })
   },

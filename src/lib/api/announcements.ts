@@ -6,10 +6,6 @@ import type {
 } from "../types/announcements"
 
 export const announcementsApi = {
-  list: async (): Promise<Announcement[]> => {
-    return authedRequest<Announcement[]>("/v1/announcements/")
-  },
-
   getAll: async (): Promise<Announcement[]> => {
     return authedRequest<Announcement[]>("/v1/announcements/all")
   },

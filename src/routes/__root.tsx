@@ -3,6 +3,9 @@ import { TooltipProvider } from "../components/ui/tooltip"
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools"
 import { TanStackDevtools } from "@tanstack/react-devtools"
 
+import { QueryClientProvider } from "@tanstack/react-query"
+import { ReactQueryDevtoolsPanel } from "@tanstack/react-query-devtools"
+import { getQueryClient } from "../lib/query-client"
 import { ThemeProvider } from "../providers/theme-provider"
 import { AuthProvider } from "../providers/auth-provider"
 import { NotificationsProvider } from "../providers/notifications-provider"
@@ -66,13 +69,15 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body>
-        <TooltipProvider>
-          <ThemeProvider>
-            <AuthProvider>
-              <NotificationsProvider>{children}</NotificationsProvider>
-            </AuthProvider>
-          </ThemeProvider>
-        </TooltipProvider>
+        <QueryClientProvider client={getQueryClient()}>
+          <TooltipProvider>
+            <ThemeProvider>
+              <AuthProvider>
+                <NotificationsProvider>{children}</NotificationsProvider>
+              </AuthProvider>
+            </ThemeProvider>
+          </TooltipProvider>
+        </QueryClientProvider>
         <TanStackDevtools
           config={{
             position: "bottom-right",
@@ -81,6 +86,10 @@ function RootDocument({ children }: { children: React.ReactNode }) {
             {
               name: "Tanstack Router",
               render: <TanStackRouterDevtoolsPanel />,
+            },
+            {
+              name: "Tanstack Query",
+              render: <ReactQueryDevtoolsPanel />,
             },
           ]}
         />

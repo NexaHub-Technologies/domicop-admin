@@ -1,8 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { useState, useEffect, useCallback } from "react"
+import { useState } from "react"
 import { authApi } from "../../lib/api/auth"
-import { adminsApi } from "../../lib/api/admins"
-import { notificationsApi } from "../../lib/api/notifications"
+import {
+  useAdmins,
+  useCreateAdmin,
+  useRevokeAdmin,
+  useSetOfficerRole,
+  useNotificationPreferences,
+  useUpdateNotificationPreferences,
+} from "../../lib/queries"
 import { ApiError } from "../../lib/http"
 import { useAuth } from "../../providers/auth-provider"
 import type { AdminProfile, CreateAdminInput } from "../../lib/types/admins"
@@ -15,6 +21,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { CardSkeleton } from "@/components/ui/table-skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { HugeiconsIcon } from "@hugeicons/react"
@@ -58,9 +65,15 @@ function SettingsPage() {
           }`}
         >
           {toast.type === "success" ? (
-            <HugeiconsIcon icon={CheckmarkCircle02Icon} className="h-5 w-5 shrink-0" />
+            <HugeiconsIcon
+              icon={CheckmarkCircle02Icon}
+              className="h-5 w-5 shrink-0"
+            />
           ) : (
-            <HugeiconsIcon icon={CancelSquareIcon} className="h-5 w-5 shrink-0" />
+            <HugeiconsIcon
+              icon={CancelSquareIcon}
+              className="h-5 w-5 shrink-0"
+            />
           )}
           <span className="text-sm font-medium">{toast.message}</span>
         </div>
@@ -143,7 +156,7 @@ function ChangePasswordCard({
     } catch (err) {
       showToast(
         err instanceof ApiError ? err.message : "Failed to change password",
-        "error",
+        "error"
       )
     } finally {
       setSaving(false)
@@ -215,54 +228,67 @@ function AdminsCard({
   showToast: (m: string, t: "success" | "error") => void
 }) {
   const { user } = useAuth()
-  const [admins, setAdmins] = useState<AdminProfile[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const adminsQuery = useAdmins()
+  const admins = adminsQuery.data ?? []
+  const loading = adminsQuery.isPending
+  const error = adminsQuery.error
+    ? adminsQuery.error instanceof Error
+      ? adminsQuery.error.message
+      : "Failed to load admins"
+    : null
+  const createAdmin = useCreateAdmin()
+  const setOffice = useSetOfficerRole()
+  const revokeAdmin = useRevokeAdmin()
   const [showForm, setShowForm] = useState(false)
 
-  const fetchData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      setAdmins(await adminsApi.list())
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load admins")
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+  const handleCreate = (input: CreateAdminInput) =>
+    createAdmin.mutate(input, {
+      onSuccess: () => {
+        showToast(`Admin ${input.full_name} created.`, "success")
+        setShowForm(false)
+      },
+      onError: (err) =>
+        showToast(
+          err instanceof ApiError ? err.message : "Failed to create admin",
+          "error"
+        ),
+    })
 
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
+  // The Secretary and President are the two signatures on a loan (Part C), so
+  // this is what makes loan approval possible at all.
+  const handleSetOffice = (
+    admin: AdminProfile,
+    officer_role: "secretary" | "president" | null
+  ) =>
+    setOffice.mutate(
+      { id: admin.id, officer_role },
+      {
+        onSuccess: () =>
+          showToast(
+            officer_role
+              ? `${admin.full_name} is now the ${officer_role}.`
+              : `Cleared ${admin.full_name}'s office.`,
+            "success"
+          ),
+        onError: (err) =>
+          showToast(
+            err instanceof ApiError
+              ? err.message
+              : "Failed to change the office",
+            "error"
+          ),
+      }
+    )
 
-  const handleCreate = async (input: CreateAdminInput) => {
-    try {
-      await adminsApi.create(input)
-      showToast("Administrator added.", "success")
-      setShowForm(false)
-      fetchData()
-    } catch (err) {
-      showToast(
-        err instanceof ApiError ? err.message : "Failed to add admin",
-        "error",
-      )
-    }
-  }
-
-  const handleRevoke = async (admin: AdminProfile) => {
-    try {
-      await adminsApi.revoke(admin.id)
-      showToast(`Revoked ${admin.full_name}.`, "success")
-      fetchData()
-    } catch (err) {
-      // Server returns 400 when revoking yourself, with a message.
-      showToast(
-        err instanceof ApiError ? err.message : "Failed to revoke admin",
-        "error",
-      )
-    }
-  }
+  const handleRevoke = (admin: AdminProfile) =>
+    revokeAdmin.mutate(admin.id, {
+      onSuccess: () => showToast(`Revoked ${admin.full_name}.`, "success"),
+      onError: (err) =>
+        showToast(
+          err instanceof ApiError ? err.message : "Failed to revoke",
+          "error"
+        ),
+    })
 
   return (
     <Card>
@@ -270,7 +296,8 @@ function AdminsCard({
         <div>
           <CardTitle className="text-lg sm:text-xl">Administrators</CardTitle>
           <CardDescription>
-            Admin access is granted here — never by editing a member&apos;s role.
+            Admin access is granted here — never by editing a member&apos;s
+            role.
           </CardDescription>
         </div>
         <Button onClick={() => setShowForm(true)} size="sm">
@@ -280,7 +307,7 @@ function AdminsCard({
       </CardHeader>
       <CardContent>
         {loading ? (
-          <p className="py-6 text-center text-slate-500">Loading…</p>
+          <CardSkeleton cards={3} lines={1} />
         ) : error ? (
           <p className="py-6 text-center text-red-500">{error}</p>
         ) : (
@@ -305,6 +332,11 @@ function AdminsCard({
                             SUPER
                           </span>
                         )}
+                        {a.officer_role && (
+                          <span className="ml-2 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-bold text-green-700 uppercase dark:bg-green-900/30 dark:text-green-400">
+                            {a.officer_role}
+                          </span>
+                        )}
                         {isSelf && (
                           <span className="ml-2 text-xs text-slate-400">
                             (you)
@@ -314,12 +346,34 @@ function AdminsCard({
                       <p className="text-xs text-slate-500 dark:text-slate-400">
                         {a.email}
                       </p>
+                      <label className="mt-1 flex items-center gap-2 text-xs text-slate-500">
+                        Office:
+                        <select
+                          value={a.officer_role ?? ""}
+                          onChange={(e) =>
+                            handleSetOffice(
+                              a,
+                              (e.target.value || null) as
+                                | "secretary"
+                                | "president"
+                                | null
+                            )
+                          }
+                          className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                        >
+                          <option value="">None</option>
+                          <option value="secretary">Secretary</option>
+                          <option value="president">President</option>
+                        </select>
+                      </label>
                     </div>
                   </div>
                   <button
                     onClick={() => handleRevoke(a)}
                     disabled={isSelf}
-                    title={isSelf ? "You cannot revoke yourself" : "Revoke access"}
+                    title={
+                      isSelf ? "You cannot revoke yourself" : "Revoke access"
+                    }
                     className="p-2 text-slate-400 transition-colors hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-30"
                   >
                     <HugeiconsIcon icon={Delete01Icon} className="h-5 w-5" />
@@ -455,51 +509,41 @@ function NotificationsCard({
 }: {
   showToast: (m: string, t: "success" | "error") => void
 }) {
-  const [prefs, setPrefs] = useState<NotificationPreferences | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
+  const prefsQuery = useNotificationPreferences()
+  const prefs = prefsQuery.data ?? null
+  const loading = prefsQuery.isPending
+  const error = prefsQuery.error
+    ? prefsQuery.error instanceof Error
+      ? prefsQuery.error.message
+      : "Failed to load preferences"
+    : null
+  const updatePrefs = useUpdateNotificationPreferences()
+  const saving = updatePrefs.isPending
 
-  const fetchData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      setPrefs(await notificationsApi.getPreferences())
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load preferences")
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
-
-  const save = async (updated: NotificationPreferences) => {
-    setPrefs(updated)
-    setSaving(true)
-    try {
-      await notificationsApi.updatePreferences({
+  // Query writes the new value into the cache on success and refetches on
+  // failure, so the toggle never keeps a setting the server rejected.
+  const save = (updated: NotificationPreferences) =>
+    updatePrefs.mutate(
+      {
         push_enabled: updated.push_enabled,
         categories: updated.categories,
-      })
-    } catch (err) {
-      showToast(
-        err instanceof ApiError ? err.message : "Failed to save preferences",
-        "error",
-      )
-      fetchData()
-    } finally {
-      setSaving(false)
-    }
-  }
+      },
+      {
+        onError: (err) =>
+          showToast(
+            err instanceof ApiError
+              ? err.message
+              : "Failed to save preferences",
+            "error"
+          ),
+      }
+    )
 
   if (loading) {
     return (
       <Card className="max-w-lg">
-        <CardContent className="py-8 text-center text-slate-500">
-          Loading…
+        <CardContent className="py-6">
+          <CardSkeleton cards={1} lines={4} />
         </CardContent>
       </Card>
     )

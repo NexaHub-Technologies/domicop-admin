@@ -1,8 +1,9 @@
 import { authedRequest } from "../http"
 import type {
   Loan,
-  ApplyLoanInput,
-  RepaymentInput,
+  LoanDetail,
+  SignLoanInput,
+  SignLoanResponse,
   ProcessLoanInput,
   GetLoansParams,
   LoanListResponse,
@@ -10,31 +11,6 @@ import type {
 } from "../types/loans"
 
 export const loansApi = {
-  getMyLoans: async (): Promise<Loan[]> => {
-    return authedRequest<Loan[]>("/v1/loans/me")
-  },
-
-  apply: async (data: ApplyLoanInput): Promise<Loan> => {
-    return authedRequest<Loan>("/v1/loans/apply", {
-      method: "POST",
-      body: data,
-    })
-  },
-
-  getById: async (id: string): Promise<Loan> => {
-    return authedRequest<Loan>(`/v1/loans/${id}`)
-  },
-
-  addRepayment: async (
-    id: string,
-    data: RepaymentInput,
-  ): Promise<Loan> => {
-    return authedRequest<Loan>(`/v1/loans/${id}/repayment`, {
-      method: "POST",
-      body: data,
-    })
-  },
-
   list: async (params?: GetLoansParams): Promise<LoanListResponse> => {
     const queryParams = new URLSearchParams()
 
@@ -45,6 +21,24 @@ export const loansApi = {
     const query = queryParams.toString() ? `?${queryParams.toString()}` : ""
 
     return authedRequest<LoanListResponse>(`/v1/loans/${query}`)
+  },
+
+  getDetail: async (id: string): Promise<LoanDetail> => {
+    return authedRequest<LoanDetail>(`/v1/loans/${id}`)
+  },
+
+  /**
+   * Sign for the cooperative. Requires the caller to hold an office.
+   *
+   * Approval needs BOTH the secretary and the president; the response's
+   * `awaiting` says which office is still outstanding, and is null once the
+   * loan has been approved.
+   */
+  sign: async (id: string, data: SignLoanInput): Promise<SignLoanResponse> => {
+    return authedRequest<SignLoanResponse>(`/v1/loans/${id}/sign`, {
+      method: "POST",
+      body: data,
+    })
   },
 
   process: async (

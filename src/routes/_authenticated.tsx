@@ -1,4 +1,10 @@
-import { createFileRoute, Outlet, redirect } from "@tanstack/react-router"
+import {
+  createFileRoute,
+  Outlet,
+  redirect,
+  useNavigate,
+} from "@tanstack/react-router"
+import { useEffect } from "react"
 import { getStoredAuth } from "../lib/auth-storage"
 import { useAuth } from "../providers/auth-provider"
 import { useTheme } from "../providers/theme-provider"
@@ -33,8 +39,16 @@ export const Route = createFileRoute("/_authenticated")({
 })
 
 function AuthenticatedLayout() {
-  const { user } = useAuth()
+  const { user, isLoading } = useAuth()
   const { resolvedTheme, setTheme } = useTheme()
+  const navigate = useNavigate()
+
+  // beforeLoad only runs on navigation. When a session dies mid-page — an
+  // expired refresh token — nothing navigates, so without this the admin sits
+  // on a dashboard where every panel errors and no link takes them anywhere.
+  useEffect(() => {
+    if (!isLoading && !user) navigate({ to: "/login" })
+  }, [isLoading, user, navigate])
 
   const toggleTheme = () => {
     setTheme(resolvedTheme === "dark" ? "light" : "dark")

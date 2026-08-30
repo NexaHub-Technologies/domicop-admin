@@ -1,9 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router"
-import { useState, useEffect, useCallback } from "react"
-import { membersApi } from "../../../lib/api/members"
-import type { Member } from "../../../lib/types/auth"
-import type { MemberStatement, StatementEntry } from "../../../lib/types/members"
+import { useState } from "react"
+import { useMember, useMemberStatement } from "../../../lib/queries"
+import type { StatementEntry } from "../../../lib/types/members"
 import { formatNaira } from "../../../lib/money"
+import { Skeleton } from "@/components/ui/skeleton"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   ArrowLeft01Icon,
@@ -42,41 +42,68 @@ function MemberDetailPage() {
   const { memberId } = Route.useParams()
   const navigate = useNavigate()
 
-  const [member, setMember] = useState<Member | null>(null)
-  const [statement, setStatement] = useState<MemberStatement | null>(null)
   const [year, setYear] = useState(new Date().getFullYear())
-  const [loading, setLoading] = useState(true)
-  const [notFound, setNotFound] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
-  const fetchData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    setNotFound(false)
-    try {
-      const [memberData, statementData] = await Promise.all([
-        membersApi.getById(memberId),
-        membersApi.getStatement(memberId, { year }),
-      ])
-      setMember(memberData)
-      setStatement(statementData)
-    } catch (err) {
-      const status = (err as { status?: number }).status
-      if (status === 404) setNotFound(true)
-      else setError(err instanceof Error ? err.message : "Failed to load member")
-    } finally {
-      setLoading(false)
-    }
-  }, [memberId, year])
+  const memberQuery = useMember(memberId)
+  const statementQuery = useMemberStatement(memberId, year)
 
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
+  const member = memberQuery.data ?? null
+  const statement = statementQuery.data ?? null
+  const loading = memberQuery.isPending
+  const notFound =
+    (memberQuery.error as { status?: number } | null)?.status === 404
+  const error = memberQuery.error
+    ? memberQuery.error instanceof Error
+      ? memberQuery.error.message
+      : "Failed to load member"
+    : null
 
   if (loading) {
+    // Shaped like the real page — avatar card on the left, stat tiles and the
+    // statement on the right — so nothing jumps when the data lands.
     return (
-      <div className="flex h-[60vh] items-center justify-center text-slate-500">
-        Loading member…
+      <div className="space-y-8">
+        <div className="flex items-center gap-4">
+          <Skeleton className="size-10 rounded-full" />
+          <div className="space-y-2">
+            <Skeleton className="h-3 w-28" />
+            <Skeleton className="h-7 w-56" />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+          <div className="rounded-3xl border border-slate-100 bg-white p-8 dark:border-slate-700 dark:bg-[#0b1326]">
+            <div className="mb-6 flex flex-col items-center gap-3">
+              <Skeleton className="size-24 rounded-full" />
+              <Skeleton className="h-5 w-40" />
+              <Skeleton className="h-3 w-48" />
+              <Skeleton className="h-6 w-24 rounded-full" />
+            </div>
+            <div className="space-y-3">
+              {Array.from({ length: 8 }, (_, i) => (
+                <Skeleton key={i} className="h-4 w-full" />
+              ))}
+            </div>
+          </div>
+          <div className="space-y-6 lg:col-span-2">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              {Array.from({ length: 3 }, (_, i) => (
+                <div
+                  key={i}
+                  className="rounded-3xl border border-slate-100 bg-white p-6 dark:border-slate-700 dark:bg-[#0b1326]"
+                >
+                  <Skeleton className="mb-3 h-3 w-24" />
+                  <Skeleton className="h-7 w-32" />
+                </div>
+              ))}
+            </div>
+            <div className="rounded-3xl border border-slate-100 bg-white p-8 dark:border-slate-700 dark:bg-[#0b1326]">
+              <Skeleton className="mb-6 h-5 w-48" />
+              {Array.from({ length: 5 }, (_, i) => (
+                <Skeleton key={i} className="mb-3 h-10 w-full" />
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     )
   }
@@ -98,7 +125,10 @@ function MemberDetailPage() {
     )
   }
 
-  const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i)
+  const years = Array.from(
+    { length: 5 },
+    (_, i) => new Date().getFullYear() - i
+  )
 
   return (
     <div className="space-y-8">
@@ -149,8 +179,43 @@ function MemberDetailPage() {
           <div className="space-y-1">
             <DetailRow label="Member No" value={member.member_no || "—"} bold />
             <DetailRow label="Phone" value={member.phone || "—"} />
+            <DetailRow label="WhatsApp" value={member.whatsapp_number || "—"} />
+            <DetailRow label="Sex" value={member.sex || "—"} />
+            <DetailRow
+              label="Date of Birth"
+              value={
+                member.date_of_birth
+                  ? new Date(member.date_of_birth).toLocaleDateString()
+                  : "—"
+              }
+            />
+            <DetailRow
+              label="Marital Status"
+              value={member.marital_status || "—"}
+            />
             <DetailRow label="Address" value={member.address || "—"} />
+            <DetailRow
+              label="ID Card No"
+              value={member.id_card_number || "—"}
+            />
             <DetailRow label="Next of Kin" value={member.next_of_kin || "—"} />
+            <DetailRow
+              label="Place of Work"
+              value={member.place_of_work || "—"}
+            />
+            <DetailRow
+              label="Type of Business"
+              value={member.type_of_business || "—"}
+            />
+            <DetailRow label="Referred By" value={member.referred_by || "—"} />
+            <DetailRow
+              label="Monthly Subscription"
+              value={
+                member.monthly_subscription == null
+                  ? "—"
+                  : formatNaira(Number(member.monthly_subscription), true)
+              }
+            />
             <DetailRow
               label="Joined"
               value={new Date(member.created_at).toLocaleDateString("en-US", {
@@ -160,6 +225,51 @@ function MemberDetailPage() {
               })}
             />
           </div>
+
+          {/* Registration record — only meaningful for members who came
+              through the registration portal. */}
+          {(member.registration_fee_paid !== undefined ||
+            member.signature_url) && (
+            <div className="mt-6 border-t border-slate-100 pt-6 dark:border-slate-700">
+              <p className="mb-3 text-[10px] font-bold tracking-wider text-slate-400 uppercase">
+                Registration
+              </p>
+              <div className="space-y-1">
+                <DetailRow
+                  label="Fees"
+                  value={member.registration_fee_paid ? "Paid" : "Unpaid"}
+                  bold
+                />
+                {member.registration_paid_at && (
+                  <DetailRow
+                    label="Paid On"
+                    value={new Date(
+                      member.registration_paid_at
+                    ).toLocaleDateString()}
+                  />
+                )}
+                {member.registration_ref && (
+                  <DetailRow
+                    label="Reference"
+                    value={member.registration_ref}
+                  />
+                )}
+              </div>
+
+              {member.signature_url && (
+                <div className="mt-4">
+                  <p className="mb-2 text-xs font-semibold text-slate-500">
+                    Signature
+                  </p>
+                  <img
+                    src={member.signature_url}
+                    alt={`Signature of ${member.full_name}`}
+                    className="w-full rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700"
+                  />
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Right Column - Stats & Activity */}

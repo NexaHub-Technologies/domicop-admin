@@ -1,14 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { useState, useEffect, useCallback } from "react"
-import { messagesApi } from "../../lib/api/messages"
+import { useState } from "react"
+import {
+  useMessages,
+  useReplyToMessage,
+  useUpdateMessageStatus,
+} from "../../lib/queries"
 import { ApiError } from "../../lib/http"
-import type {
-  Message,
-  MessageStatus,
-} from "../../lib/types/messages"
+import type { Message, MessageStatus } from "../../lib/types/messages"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { CardSkeleton } from "@/components/ui/table-skeleton"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
@@ -45,14 +47,10 @@ function initials(name: string): string {
 
 function CommunicationsPage() {
   const [tab, setTab] = useState<StatusTab>("all")
-  const [tickets, setTickets] = useState<Message[]>([])
   const [selected, setSelected] = useState<Message | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [replyText, setReplyText] = useState("")
-  const [sending, setSending] = useState(false)
   const [mobileView, setMobileView] = useState<"inbox" | "chat" | "context">(
-    "inbox",
+    "inbox"
   )
   const [toast, setToast] = useState<string | null>(null)
 
@@ -61,59 +59,47 @@ function CommunicationsPage() {
     setTimeout(() => setToast(null), 3000)
   }
 
-  const fetchData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await messagesApi.list({
-        status: tab === "all" ? undefined : tab,
-      })
-      setTickets(res.data)
-      setSelected((prev) =>
-        prev ? (res.data.find((t) => t.id === prev.id) ?? res.data[0] ?? null) : res.data[0] ?? null,
-      )
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load tickets")
-    } finally {
-      setLoading(false)
-    }
-  }, [tab])
+  const messagesQuery = useMessages()
+  const tickets = messagesQuery.data?.data ?? []
+  const loading = messagesQuery.isPending
+  const error = messagesQuery.error
+    ? messagesQuery.error instanceof Error
+      ? messagesQuery.error.message
+      : "Failed to load tickets"
+    : null
+  const replyToMessage = useReplyToMessage()
+  const updateMessageStatus = useUpdateMessageStatus()
 
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
+  const sending = replyToMessage.isPending
 
   const handleReply = async () => {
     if (!selected || !replyText.trim()) return
-    setSending(true)
     try {
-      const updated = await messagesApi.reply(selected.id, { body: replyText })
+      const updated = await replyToMessage.mutateAsync({
+        id: selected.id,
+        body: replyText,
+      })
       setReplyText("")
+      // The list is refreshed by the mutation's invalidation; only the open
+      // ticket needs setting here.
       setSelected(updated)
-      setTickets((prev) =>
-        prev.map((t) => (t.id === updated.id ? updated : t)),
-      )
     } catch (err) {
-      showToast(
-        err instanceof ApiError ? err.message : "Failed to send reply",
-      )
-    } finally {
-      setSending(false)
+      showToast(err instanceof ApiError ? err.message : "Failed to send reply")
     }
   }
 
   const handleStatus = async (status: MessageStatus) => {
     if (!selected) return
     try {
-      const updated = await messagesApi.updateStatus(selected.id, { status })
+      const updated = await updateMessageStatus.mutateAsync({
+        id: selected.id,
+        status,
+      })
       setSelected(updated)
-      setTickets((prev) =>
-        prev.map((t) => (t.id === updated.id ? updated : t)),
-      )
       showToast(`Ticket marked ${status.replace("_", " ")}.`)
     } catch (err) {
       showToast(
-        err instanceof ApiError ? err.message : "Failed to update status",
+        err instanceof ApiError ? err.message : "Failed to update status"
       )
     }
   }
@@ -131,7 +117,7 @@ function CommunicationsPage() {
           className={cn(
             "flex flex-col border-r border-slate-200 bg-white dark:border-slate-700 dark:bg-[#0b1326]",
             "w-full lg:w-[350px] xl:w-[400px]",
-            mobileView !== "inbox" && "hidden lg:flex",
+            mobileView !== "inbox" && "hidden lg:flex"
           )}
         >
           <div className="p-4 pb-2 sm:p-6 sm:pb-4">
@@ -154,7 +140,10 @@ function CommunicationsPage() {
                 >
                   Active
                 </TabsTrigger>
-                <TabsTrigger value="resolved" className="text-[10px] sm:text-xs">
+                <TabsTrigger
+                  value="resolved"
+                  className="text-[10px] sm:text-xs"
+                >
                   Done
                 </TabsTrigger>
                 <TabsTrigger value="closed" className="text-[10px] sm:text-xs">
@@ -166,9 +155,9 @@ function CommunicationsPage() {
 
           <div className="flex-1 overflow-y-auto">
             {loading ? (
-              <p className="p-6 text-center text-sm text-slate-500">
-                Loading tickets…
-              </p>
+              <div className="p-4">
+                <CardSkeleton cards={5} lines={1} />
+              </div>
             ) : error ? (
               <p className="p-6 text-center text-sm text-red-500">{error}</p>
             ) : tickets.length === 0 ? (
@@ -186,7 +175,7 @@ function CommunicationsPage() {
                   className={cn(
                     "w-full border-b border-slate-100 p-3 text-left transition-colors hover:bg-slate-50 sm:p-4 dark:border-slate-700 dark:hover:bg-slate-800/50",
                     selected?.id === ticket.id &&
-                      "bg-slate-50 dark:bg-slate-800/50",
+                      "bg-slate-50 dark:bg-slate-800/50"
                   )}
                 >
                   <div className="flex items-start gap-2 sm:gap-3">
@@ -223,7 +212,7 @@ function CommunicationsPage() {
         <section
           className={cn(
             "flex flex-1 flex-col bg-[#f7f9fb] dark:bg-[#060e20]",
-            mobileView !== "chat" && "hidden lg:flex",
+            mobileView !== "chat" && "hidden lg:flex"
           )}
         >
           {selected ? (
@@ -333,7 +322,7 @@ function CommunicationsPage() {
         <section
           className={cn(
             "flex w-[280px] flex-col border-l border-slate-200 bg-white p-4 xl:w-[300px] xl:p-6 dark:border-slate-700 dark:bg-[#0b1326]",
-            mobileView !== "context" && "hidden xl:flex",
+            mobileView !== "context" && "hidden xl:flex"
           )}
         >
           <Button
@@ -438,7 +427,7 @@ function ThreadBubble({
     <div
       className={cn(
         "flex items-start gap-2 sm:gap-3",
-        isRight && "flex-row-reverse",
+        isRight && "flex-row-reverse"
       )}
     >
       <div
@@ -446,7 +435,7 @@ function ThreadBubble({
           "flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold uppercase sm:h-8 sm:w-8",
           isRight
             ? "bg-gradient-to-br from-[#1e55be] to-[#003d9a] text-white"
-            : "bg-[#1e55be]/10 text-[#1e55be] dark:bg-[#1e55be]/20 dark:text-[#b2c5ff]",
+            : "bg-[#1e55be]/10 text-[#1e55be] dark:bg-[#1e55be]/20 dark:text-[#b2c5ff]"
         )}
       >
         {isRight ? (
@@ -461,14 +450,14 @@ function ThreadBubble({
             "border-none shadow-sm",
             isRight
               ? "rounded-2xl rounded-tr-none bg-[#1e55be]"
-              : "rounded-2xl rounded-tl-none",
+              : "rounded-2xl rounded-tl-none"
           )}
         >
           <CardContent className="p-3 sm:p-4">
             <p
               className={cn(
                 "text-sm",
-                isRight ? "text-white" : "text-[#191c1e] dark:text-white",
+                isRight ? "text-white" : "text-[#191c1e] dark:text-white"
               )}
             >
               {body}
@@ -478,7 +467,7 @@ function ThreadBubble({
         <span
           className={cn(
             "mt-1 block text-xs text-slate-400",
-            isRight && "text-right",
+            isRight && "text-right"
           )}
         >
           {new Date(time).toLocaleTimeString([], {

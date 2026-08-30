@@ -1,13 +1,9 @@
 import { authedRequest } from "../http"
 import type {
-  Notification,
   NotificationsListResponse,
   GetNotificationsParams,
-  RegisterDeviceInput,
-  UnregisterDeviceInput,
   NotificationPreferences,
   UpdateNotificationPreferencesInput,
-  SendPushTestInput,
   BroadcastNotificationInput,
   BroadcastResponse,
 } from "../types/notifications"
@@ -28,32 +24,8 @@ export const notificationsApi = {
     )
   },
 
-  deleteAll: async (): Promise<void> => {
-    await authedRequest("/v1/notifications/me", { method: "DELETE" })
-  },
-
   markAllRead: async (): Promise<void> => {
     await authedRequest("/v1/notifications/me/read-all", { method: "POST" })
-  },
-
-  markRead: async (id: string): Promise<Notification> => {
-    return authedRequest<Notification>(`/v1/notifications/${id}/read`, {
-      method: "PATCH",
-    })
-  },
-
-  registerDevice: async (data: RegisterDeviceInput): Promise<void> => {
-    await authedRequest("/v1/notifications/devices", {
-      method: "POST",
-      body: data,
-    })
-  },
-
-  unregisterDevice: async (data: UnregisterDeviceInput): Promise<void> => {
-    await authedRequest("/v1/notifications/devices/unregister", {
-      method: "POST",
-      body: data,
-    })
   },
 
   getPreferences: async (): Promise<NotificationPreferences> => {
@@ -72,13 +44,6 @@ export const notificationsApi = {
         body: data,
       },
     )
-  },
-
-  sendTestPush: async (data: SendPushTestInput): Promise<void> => {
-    await authedRequest("/v1/notifications/push/test", {
-      method: "POST",
-      body: data,
-    })
   },
 
   broadcast: async (
