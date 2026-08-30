@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { useState, useEffect, useCallback } from "react"
-import { announcementsApi } from "../../lib/api/announcements"
+import { useState } from "react"
 import { notificationsApi } from "../../lib/api/notifications"
 import { ApiError } from "../../lib/http"
 import type {
@@ -12,6 +11,13 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { CardSkeleton } from "@/components/ui/table-skeleton"
+import {
+  useAnnouncements,
+  useCreateAnnouncement,
+  useUpdateAnnouncement,
+  useDeleteAnnouncement,
+} from "../../lib/queries"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   Megaphone01Icon,
@@ -51,9 +57,15 @@ function AnnouncementsPage() {
           }`}
         >
           {toast.type === "success" ? (
-            <HugeiconsIcon icon={CheckmarkCircle02Icon} className="h-5 w-5 shrink-0" />
+            <HugeiconsIcon
+              icon={CheckmarkCircle02Icon}
+              className="h-5 w-5 shrink-0"
+            />
           ) : (
-            <HugeiconsIcon icon={CancelSquareIcon} className="h-5 w-5 shrink-0" />
+            <HugeiconsIcon
+              icon={CancelSquareIcon}
+              className="h-5 w-5 shrink-0"
+            />
           )}
           <span className="text-sm font-medium">{toast.message}</span>
         </div>
@@ -90,80 +102,89 @@ function AnnouncementsTab({
 }: {
   showToast: (m: string, t: "success" | "error") => void
 }) {
-  const [items, setItems] = useState<Announcement[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const announcementsQuery = useAnnouncements()
+  const items = announcementsQuery.data ?? []
+  const loading = announcementsQuery.isPending
+  const error = announcementsQuery.error
+    ? announcementsQuery.error instanceof Error
+      ? announcementsQuery.error.message
+      : "Failed to load announcements"
+    : null
+
+  const createAnnouncement = useCreateAnnouncement()
+  const updateAnnouncement = useUpdateAnnouncement()
+  const deleteAnnouncement = useDeleteAnnouncement()
+  const isPending = (id: string) =>
+    (updateAnnouncement.isPending && updateAnnouncement.variables?.id === id) ||
+    (deleteAnnouncement.isPending && deleteAnnouncement.variables === id)
   const [editing, setEditing] = useState<Announcement | null>(null)
   const [showForm, setShowForm] = useState(false)
 
-  const fetchData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      setItems(await announcementsApi.getAll())
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load announcements",
-      )
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+  const handleCreate = (input: CreateAnnouncementInput) =>
+    createAnnouncement.mutate(input, {
+      onSuccess: () => {
+        showToast(
+          input.published
+            ? "Published and broadcast to members."
+            : "Draft saved.",
+          "success"
+        )
+        setShowForm(false)
+      },
+      onError: (err) =>
+        showToast(
+          err instanceof ApiError ? err.message : "Failed to create",
+          "error"
+        ),
+    })
 
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
+  const handleUpdate = (id: string, input: CreateAnnouncementInput) =>
+    updateAnnouncement.mutate(
+      { id, data: input },
+      {
+        onSuccess: () => {
+          showToast("Announcement updated.", "success")
+          setEditing(null)
+        },
+        onError: (err) =>
+          showToast(
+            err instanceof ApiError ? err.message : "Failed to update",
+            "error"
+          ),
+      }
+    )
 
-  const handleCreate = async (input: CreateAnnouncementInput) => {
-    try {
-      await announcementsApi.create(input)
-      showToast(
-        input.published ? "Published and broadcast to members." : "Draft saved.",
-        "success",
-      )
-      setShowForm(false)
-      fetchData()
-    } catch (err) {
-      showToast(err instanceof ApiError ? err.message : "Failed to create", "error")
-    }
-  }
+  // The badge flips the instant it is pressed — the outcome is entirely
+  // predictable, so making the admin wait a round trip to see it buys nothing.
+  // Query snapshots the list in onMutate and restores it if the server refuses.
+  const handleTogglePublish = (a: Announcement) =>
+    updateAnnouncement.mutate(
+      { id: a.id, data: { published: !a.published } },
+      {
+        onSuccess: () =>
+          showToast(
+            a.published
+              ? "Unpublished."
+              : "Published and broadcast to members.",
+            "success"
+          ),
+        onError: (err) =>
+          showToast(
+            err instanceof ApiError ? err.message : "Failed to update",
+            "error"
+          ),
+      }
+    )
 
-  const handleUpdate = async (
-    id: string,
-    input: CreateAnnouncementInput,
-  ) => {
-    try {
-      await announcementsApi.update(id, input)
-      showToast("Announcement updated.", "success")
-      setEditing(null)
-      fetchData()
-    } catch (err) {
-      showToast(err instanceof ApiError ? err.message : "Failed to update", "error")
-    }
-  }
-
-  const handleTogglePublish = async (a: Announcement) => {
-    try {
-      await announcementsApi.update(a.id, { published: !a.published })
-      showToast(
-        a.published ? "Unpublished." : "Published and broadcast to members.",
-        "success",
-      )
-      fetchData()
-    } catch (err) {
-      showToast(err instanceof ApiError ? err.message : "Failed to update", "error")
-    }
-  }
-
-  const handleDelete = async (id: string) => {
-    try {
-      await announcementsApi.delete(id)
-      showToast("Announcement deleted.", "success")
-      fetchData()
-    } catch (err) {
-      showToast(err instanceof ApiError ? err.message : "Failed to delete", "error")
-    }
-  }
+  const handleDelete = (id: string) =>
+    deleteAnnouncement.mutate(id, {
+      onSuccess: () => showToast("Announcement deleted.", "success"),
+      onError: (err) =>
+        showToast(
+          err instanceof ApiError ? err.message : "Failed to delete",
+          "error"
+        ),
+    })
 
   return (
     <div className="space-y-4">
@@ -178,17 +199,22 @@ function AnnouncementsTab({
       </div>
 
       {loading ? (
-        <p className="py-8 text-center text-slate-500">Loading…</p>
+        <CardSkeleton cards={3} lines={2} />
       ) : error ? (
         <p className="py-8 text-center text-red-500">{error}</p>
       ) : items.length === 0 ? (
-        <p className="py-8 text-center text-slate-500">
-          No announcements yet.
-        </p>
+        <p className="py-8 text-center text-slate-500">No announcements yet.</p>
       ) : (
         <div className="space-y-3">
           {items.map((a) => (
-            <Card key={a.id}>
+            <Card
+              key={a.id}
+              className={
+                isPending(a.id)
+                  ? "opacity-60 transition-opacity"
+                  : "transition-opacity"
+              }
+            >
               <CardContent className="flex items-start justify-between gap-4 p-4 sm:p-6">
                 <div className="min-w-0 flex-1">
                   <div className="mb-1 flex items-center gap-2">
@@ -218,6 +244,7 @@ function AnnouncementsTab({
                     size="sm"
                     variant="outline"
                     onClick={() => handleTogglePublish(a)}
+                    disabled={isPending(a.id)}
                     className="text-xs"
                   >
                     {a.published ? "Unpublish" : "Publish"}
@@ -226,11 +253,15 @@ function AnnouncementsTab({
                     onClick={() => setEditing(a)}
                     className="p-2 text-slate-400 hover:text-[#003d9a] dark:hover:text-[#b2c5ff]"
                   >
-                    <HugeiconsIcon icon={PencilEdit01Icon} className="h-5 w-5" />
+                    <HugeiconsIcon
+                      icon={PencilEdit01Icon}
+                      className="h-5 w-5"
+                    />
                   </button>
                   <button
                     onClick={() => handleDelete(a.id)}
-                    className="p-2 text-slate-400 hover:text-red-500"
+                    disabled={isPending(a.id)}
+                    className="p-2 text-slate-400 hover:text-red-500 disabled:opacity-40"
                   >
                     <HugeiconsIcon icon={Delete01Icon} className="h-5 w-5" />
                   </button>
@@ -380,7 +411,7 @@ function BroadcastTab({
     } catch (err) {
       showToast(
         err instanceof ApiError ? err.message : "Failed to send broadcast",
-        "error",
+        "error"
       )
     } finally {
       setSending(false)
@@ -429,7 +460,7 @@ function BroadcastTab({
                 setType(
                   e.target.value as NonNullable<
                     BroadcastNotificationInput["type"]
-                  >,
+                  >
                 )
               }
               className={inputCls}

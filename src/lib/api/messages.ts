@@ -1,7 +1,6 @@
 import { authedRequest } from "../http"
 import type {
   Message,
-  CreateMessageInput,
   ReplyToMessageInput,
   UpdateMessageStatusInput,
   MessagesListResponse,
@@ -9,10 +8,6 @@ import type {
 } from "../types/messages"
 
 export const messagesApi = {
-  getMyMessages: async (): Promise<Message[]> => {
-    return authedRequest<Message[]>("/v1/messages/me")
-  },
-
   list: async (
     params?: GetMessagesParams,
   ): Promise<MessagesListResponse> => {
@@ -23,13 +18,6 @@ export const messagesApi = {
     const query = queryParams.toString() ? `?${queryParams.toString()}` : ""
 
     return authedRequest<MessagesListResponse>(`/v1/messages/${query}`)
-  },
-
-  create: async (data: CreateMessageInput): Promise<Message> => {
-    return authedRequest<Message>("/v1/messages/", {
-      method: "POST",
-      body: data,
-    })
   },
 
   reply: async (

@@ -14,6 +14,7 @@ import {
   setStoredUser,
   clearStoredAuth,
   displayNameFromEmail,
+  SESSION_ENDED_EVENT,
   type AdminUser,
 } from "../lib/auth-storage"
 
@@ -35,6 +36,16 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AdminUser | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+
+  // A session can end without anyone pressing "log out" — an expired refresh
+  // token ends it from inside the HTTP layer. Listen for that so the UI drops
+  // the admin immediately instead of leaving them on a page whose every
+  // request 401s.
+  useEffect(() => {
+    const onSessionEnded = () => setUser(null)
+    window.addEventListener(SESSION_ENDED_EVENT, onSessionEnded)
+    return () => window.removeEventListener(SESSION_ENDED_EVENT, onSessionEnded)
+  }, [])
 
   useEffect(() => {
     const { user: storedUser } = getStoredAuth()
@@ -64,12 +75,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Fetch the admin profile to get the authoritative full_name.
         let fullName = res.user.full_name
         let avatarUrl = res.user.avatar_url
+        let officerRole: "secretary" | "president" | null = null
         try {
           const profiles = await adminsApi.list()
           const profile = profiles.find((p) => p.email === res.user.email)
           if (profile) {
             fullName = profile.full_name
             avatarUrl = profile.avatar_url ?? undefined
+            officerRole = profile.officer_role
           }
         } catch {
           // Admin list endpoint unavailable; fall through to login-response values.
@@ -81,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           role: res.user.role,
           name: fullName || displayNameFromEmail(res.user.email),
           avatar_url: avatarUrl,
+          officer_role: officerRole,
         }
         setStoredUser(adminUser)
         setUser(adminUser)

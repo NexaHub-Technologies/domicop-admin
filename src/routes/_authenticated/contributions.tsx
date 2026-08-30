@@ -1,23 +1,24 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { useState, useMemo, useEffect, useCallback } from "react"
-import { contributionsApi } from "../../lib/api/contributions"
+import { useState, useMemo, useEffect } from "react"
 import { ApiError } from "../../lib/http"
 import type {
   Contribution,
   UpdateContributionStatusInput,
+} from "../../lib/types/contributions"
+import {
+  contributionMemberName,
+  contributionMemberNo,
 } from "../../lib/types/contributions"
 import { formatNaira } from "../../lib/money"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+  useContributions,
+  useUpdateContributionStatus,
+} from "../../lib/queries"
+import { createColumnHelper } from "@tanstack/react-table"
+import { DataTable, dataTableFeatures } from "../../components/data-table"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   Download04Icon,
@@ -41,17 +42,91 @@ const PAGE_SIZE = 25
 const statusStyles: Record<string, string> = {
   success:
     "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
-  pending: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
+  pending:
+    "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
   failed: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
-  abandoned: "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400",
+  abandoned:
+    "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400",
+}
+
+const helper = createColumnHelper<typeof dataTableFeatures, Contribution>()
+
+function useContributionColumns(onReview: (c: Contribution) => void) {
+  return useMemo(
+    () =>
+      helper.columns([
+        helper.accessor((c) => contributionMemberName(c), {
+          id: "member",
+          header: "Member",
+          cell: ({ row }) => (
+            <div>
+              <p className="text-sm font-bold text-[#191c1e] dark:text-white">
+                {contributionMemberName(row.original)}
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {contributionMemberNo(row.original)}
+              </p>
+            </div>
+          ),
+        }),
+        helper.accessor("amount", {
+          header: "Amount",
+          cell: ({ getValue }) => (
+            <span className="font-bold text-[#191c1e] dark:text-white">
+              {formatNaira(Number(getValue()))}
+            </span>
+          ),
+        }),
+        helper.accessor((c) => `${c.month} ${c.year}`, {
+          id: "period",
+          header: "Period",
+          cell: ({ getValue }) => (
+            <span className="text-sm text-slate-600 dark:text-slate-400">
+              {getValue()}
+            </span>
+          ),
+        }),
+        helper.accessor("payment_method", {
+          header: "Method",
+          cell: ({ getValue }) => (
+            <span className="text-sm text-slate-600 capitalize dark:text-slate-400">
+              {getValue() ?? "—"}
+            </span>
+          ),
+        }),
+        helper.accessor("payment_status", {
+          header: "Status",
+          cell: ({ getValue }) => (
+            <Badge
+              variant="outline"
+              className={`text-[10px] font-black uppercase ${statusStyles[getValue() as string] ?? ""}`}
+            >
+              {getValue()}
+            </Badge>
+          ),
+        }),
+        helper.display({
+          id: "actions",
+          header: "",
+          cell: ({ row }) => (
+            <div className="text-right">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onReview(row.original)}
+                className="text-xs"
+              >
+                Review
+              </Button>
+            </div>
+          ),
+        }),
+      ]),
+    [onReview]
+  )
 }
 
 function ContributionsPage() {
-  const [rows, setRows] = useState<Contribution[]>([])
-  const [total, setTotal] = useState<number | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
   const [status, setStatus] = useState<StatusFilter>("all")
   const [year, setYear] = useState<number | "">("")
   const [search, setSearch] = useState("")
@@ -67,30 +142,29 @@ function ContributionsPage() {
     setTimeout(() => setToast(null), 3000)
   }
 
-  const fetchData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await contributionsApi.list({
-        page,
-        limit: PAGE_SIZE,
-        status: status === "all" ? undefined : status,
-        year: year === "" ? undefined : year,
-      })
-      setRows(res.data)
-      setTotal(res.total)
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load contributions",
-      )
-    } finally {
-      setLoading(false)
-    }
-  }, [page, status, year])
+  const contributionsQuery = useContributions(
+    page,
+    PAGE_SIZE,
+    year === "" ? undefined : year
+  )
+  const allRows = contributionsQuery.data?.data ?? []
+  // The status filter stays client-side over the page, as it was; the year is
+  // a server parameter and so lives in the query key.
+  const rows =
+    status === "all"
+      ? allRows
+      : allRows.filter((c: Contribution) => c.payment_status === status)
+  const total = contributionsQuery.data?.total ?? null
+  const loading = contributionsQuery.isPending
+  const error = contributionsQuery.error
+    ? contributionsQuery.error instanceof Error
+      ? contributionsQuery.error.message
+      : "Failed to load contributions"
+    : null
 
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
+  const updateStatus = useUpdateContributionStatus()
+  const isPending = (id: string) =>
+    updateStatus.isPending && updateStatus.variables?.id === id
 
   // status/year filters reset to page 1
   useEffect(() => {
@@ -102,43 +176,56 @@ function ContributionsPage() {
     const q = search.toLowerCase()
     return rows.filter(
       (c) =>
-        c.member_name?.toLowerCase().includes(q) ||
-        (c.member_no ?? "").toLowerCase().includes(q),
+        contributionMemberName(c).toLowerCase().includes(q) ||
+        contributionMemberNo(c).toLowerCase().includes(q)
     )
   }, [rows, search])
 
   const totalPages = total ? Math.ceil(total / PAGE_SIZE) : 1
+  const columns = useContributionColumns((c) => setReviewing(c))
 
-  const handleUpdateStatus = async (
-    id: string,
-    newStatus: ContributionStatus,
-  ) => {
-    try {
-      await contributionsApi.updateStatus(id, { status: newStatus })
-      showToast(`Contribution marked ${newStatus}.`, "success")
-      setReviewing(null)
-      fetchData()
-    } catch (err) {
-      showToast(
-        err instanceof ApiError ? err.message : "Failed to update status",
-        "error",
-      )
-    }
-  }
+  // The badge changes the moment the choice is made, and Query restores the
+  // previous status if the server refuses — the table never keeps showing a
+  // state that was rejected.
+  const handleUpdateStatus = (id: string, newStatus: ContributionStatus) =>
+    updateStatus.mutate(
+      { id, status: newStatus },
+      {
+        onSuccess: () => {
+          setReviewing(null)
+          showToast(`Contribution marked ${newStatus}.`, "success")
+        },
+        onError: (err) =>
+          showToast(
+            err instanceof ApiError ? err.message : "Failed to update status",
+            "error"
+          ),
+      }
+    )
 
   const exportCSV = () => {
-    const headers = ["Member No", "Member", "Amount (NGN)", "Month", "Year", "Status"]
+    const headers = [
+      "Member No",
+      "Member",
+      "Amount (NGN)",
+      "Month",
+      "Year",
+      "Status",
+    ]
     const lines = filtered.map((c) =>
       [
-        c.member_no ?? "",
-        c.member_name ?? "",
-        (c.amount / 100).toFixed(2),
+        contributionMemberNo(c),
+        contributionMemberName(c),
+        // contributions.amount is NAIRA, normalised in 20260705075811 — the
+        // /100 that used to be here exported ₦5,000 as "50.00" while the table
+        // beside it rendered ₦5,000.00.
+        c.amount.toFixed(2),
         c.month,
         c.year,
-        c.status,
+        c.payment_status,
       ]
         .map((v) => `"${v}"`)
-        .join(","),
+        .join(",")
     )
     const blob = new Blob([[headers.join(","), ...lines].join("\n")], {
       type: "text/csv;charset=utf-8;",
@@ -151,7 +238,10 @@ function ContributionsPage() {
     URL.revokeObjectURL(url)
   }
 
-  const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i)
+  const years = Array.from(
+    { length: 5 },
+    (_, i) => new Date().getFullYear() - i
+  )
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -203,7 +293,13 @@ function ContributionsPage() {
             <span>Status:</span>
           </div>
           {(
-            ["all", "success", "pending", "failed", "abandoned"] as StatusFilter[]
+            [
+              "all",
+              "success",
+              "pending",
+              "failed",
+              "abandoned",
+            ] as StatusFilter[]
           ).map((s) => (
             <button
               key={s}
@@ -251,94 +347,22 @@ function ContributionsPage() {
       <Card className="overflow-hidden">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-slate-50/50 hover:bg-slate-50/50 dark:bg-slate-800/50 dark:hover:bg-slate-800/50">
-                  <TableHead className="text-[10px] font-black tracking-widest uppercase">
-                    Member
-                  </TableHead>
-                  <TableHead className="text-[10px] font-black tracking-widest uppercase">
-                    Amount
-                  </TableHead>
-                  <TableHead className="hidden text-[10px] font-black tracking-widest uppercase sm:table-cell">
-                    Period
-                  </TableHead>
-                  <TableHead className="hidden text-[10px] font-black tracking-widest uppercase md:table-cell">
-                    Method
-                  </TableHead>
-                  <TableHead className="text-[10px] font-black tracking-widest uppercase">
-                    Status
-                  </TableHead>
-                  <TableHead className="text-right text-[10px] font-black tracking-widest uppercase">
-                    Actions
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {loading ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="py-8 text-center text-slate-500">
-                      Loading contributions…
-                    </TableCell>
-                  </TableRow>
-                ) : error ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="py-8 text-center text-red-500">
-                      {error}
-                    </TableCell>
-                  </TableRow>
-                ) : filtered.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="py-8 text-center text-slate-500">
-                      No contributions found
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filtered.map((c) => (
-                    <TableRow
-                      key={c.id}
-                      className="transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                    >
-                      <TableCell>
-                        <p className="text-sm font-bold text-[#191c1e] dark:text-white">
-                          {c.member_name}
-                        </p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">
-                          {c.member_no}
-                        </p>
-                      </TableCell>
-                      <TableCell className="font-bold text-[#191c1e] dark:text-white">
-                        {formatNaira(c.amount)}
-                      </TableCell>
-                      <TableCell className="hidden text-sm text-slate-600 sm:table-cell dark:text-slate-400">
-                        {c.month} {c.year}
-                      </TableCell>
-                      <TableCell className="hidden text-sm text-slate-600 capitalize md:table-cell dark:text-slate-400">
-                        {c.payment_method ?? "—"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] font-black uppercase ${statusStyles[c.status] ?? ""}`}
-                        >
-                          {c.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setReviewing(c)}
-                          className="text-xs"
-                        >
-                          Review
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+            <DataTable
+              columns={columns}
+              data={filtered}
+              loading={loading}
+              error={error}
+              emptyMessage="No contributions found"
+              rowClassName={(c) => (isPending(c.id) ? "opacity-50" : "")}
+              skeletonWidths={[
+                "h-8 w-36",
+                "h-4 w-20",
+                "h-4 w-24",
+                "h-4 w-16",
+                "h-5 w-16",
+                "h-8 w-20",
+              ]}
+            />
           </div>
         </CardContent>
       </Card>
@@ -390,7 +414,8 @@ function ContributionsPage() {
             </div>
             <div className="mb-4 space-y-1 text-sm">
               <p className="font-bold text-[#191c1e] dark:text-white">
-                {reviewing.member_name} · {reviewing.member_no}
+                {contributionMemberName(reviewing)} ·{" "}
+                {contributionMemberNo(reviewing)}
               </p>
               <p className="text-slate-500 dark:text-slate-400">
                 {formatNaira(reviewing.amount)} · {reviewing.month}{" "}
@@ -407,12 +432,18 @@ function ContributionsPage() {
             </p>
             <div className="grid grid-cols-2 gap-2">
               {(
-                ["success", "pending", "failed", "abandoned"] as ContributionStatus[]
+                [
+                  "success",
+                  "pending",
+                  "failed",
+                  "abandoned",
+                ] as ContributionStatus[]
               ).map((s) => (
                 <button
                   key={s}
                   onClick={() => handleUpdateStatus(reviewing.id, s)}
-                  className={`rounded-lg py-2 text-sm font-semibold capitalize transition-colors ${
+                  disabled={isPending(reviewing.id)}
+                  className={`rounded-lg py-2 text-sm font-semibold capitalize transition-colors disabled:opacity-50 ${
                     s === "success"
                       ? "bg-green-600 text-white hover:brightness-110"
                       : s === "failed"

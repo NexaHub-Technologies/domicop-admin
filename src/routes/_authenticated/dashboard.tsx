@@ -1,14 +1,19 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router"
-import { useState, useMemo, useEffect, useCallback } from "react"
-import { reportsApi } from "../../lib/api/reports"
-import { membersApi } from "../../lib/api/members"
-import { loansApi } from "../../lib/api/loans"
-import { contributionsApi } from "../../lib/api/contributions"
-import type { ReportSummary } from "../../lib/types/reports"
+import { useState, useMemo } from "react"
+import {
+  useReportSummary,
+  useMembers,
+  useLoans,
+  useContributions,
+  useUpdateMember,
+  useCreateMember,
+} from "../../lib/queries"
 import { formatNaira } from "../../lib/money"
+import { Skeleton } from "@/components/ui/skeleton"
 import type { Member } from "../../lib/types/auth"
-import type { Loan } from "../../lib/types/loans"
+import { loanMemberName } from "../../lib/types/loans"
 import type { Contribution } from "../../lib/types/contributions"
+import { contributionMemberName } from "../../lib/types/contributions"
 import {
   Card,
   CardContent,
@@ -74,7 +79,7 @@ type ChartPoint = { month: string; amount: number }
 
 function aggregateContributions(
   contributions: Contribution[],
-  monthsBack: number,
+  monthsBack: number
 ): ChartPoint[] {
   const groups = new Map<string, number>()
   const now = new Date()
@@ -101,7 +106,10 @@ function aggregateContributions(
   })
 }
 
-function computeChartData(contributions: Contribution[], range: TimeRange): ChartPoint[] {
+function computeChartData(
+  contributions: Contribution[],
+  range: TimeRange
+): ChartPoint[] {
   const months = range === "6M" ? 6 : range === "1Y" ? 12 : 24
   return aggregateContributions(contributions, months)
 }
@@ -122,7 +130,7 @@ function mapContributionActivity(c: Contribution) {
   return {
     id: c.id,
     type: "contribution",
-    message: `${c.member_name} — ${formatNaira(c.amount)} (${c.status})`,
+    message: `${contributionMemberName(c)} — ${formatNaira(c.amount)} (${c.payment_status})`,
     time: relativeTime(c.created_at),
     priority: (c.amount > 10000 ? "high" : "normal") as "high" | "normal",
   }
@@ -162,50 +170,60 @@ function DashboardPage() {
   const navigate = useNavigate()
 
   // Data state
-  const [summary, setSummary] = useState<ReportSummary | null>(null)
-  const [members, setMembers] = useState<Member[]>([])
-  const [pendingLoansList, setPendingLoansList] = useState<Loan[]>([])
-  const [pendingLoansTotal, setPendingLoansTotal] = useState<number>(0)
-  const [contributions, setContributions] = useState<Contribution[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  // Four independent reads. Query runs them in parallel, caches each on its own
+  // key, and shares them with the pages that use the same data — the members
+  // table here and on /members is now one cache entry, not two fetches.
+  const summaryQuery = useReportSummary()
+  const membersQuery = useMembers(1, 10)
+  const pendingLoansQuery = useLoans(1, 5, "pending")
+  const contributionsQuery = useContributions(1, 200)
+
+  const summary = summaryQuery.data ?? null
+  const members = membersQuery.data?.data ?? []
+  const pendingLoansList = pendingLoansQuery.data?.data ?? []
+  const pendingLoansTotal =
+    pendingLoansQuery.data?.total ?? pendingLoansList.length
+  const contributions = contributionsQuery.data?.data ?? []
+
+  const loading =
+    summaryQuery.isPending ||
+    membersQuery.isPending ||
+    pendingLoansQuery.isPending ||
+    contributionsQuery.isPending
+  const firstError =
+    summaryQuery.error ??
+    membersQuery.error ??
+    pendingLoansQuery.error ??
+    contributionsQuery.error
+  const error = firstError
+    ? firstError instanceof Error
+      ? firstError.message
+      : "Failed to load dashboard data"
+    : null
+
+  const updateMember = useUpdateMember()
+  const createMember = useCreateMember()
+  const isMemberPending = (id: string) =>
+    updateMember.isPending && updateMember.variables?.id === id
+  const addingMember = createMember.isPending
 
   // UI state
   const [timeRange, setTimeRange] = useState<TimeRange>("6M")
-  const [filterStatus, setFilterStatus] = useState<"all" | "active" | "pending">("all")
+  const [filterStatus, setFilterStatus] = useState<
+    "all" | "active" | "pending"
+  >("all")
   const [editingMember, setEditingMember] = useState<Member | null>(null)
-  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null)
+  const [toast, setToast] = useState<{
+    message: string
+    type: "success" | "error"
+  } | null>(null)
   const [showAddMember, setShowAddMember] = useState(false)
 
-  // Fetch all data
-  const fetchData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const [summaryData, membersData, loansData, contributionsData] = await Promise.all([
-        reportsApi.getSummary({ year: new Date().getFullYear() }),
-        membersApi.list({ limit: 10 }),
-        loansApi.list({ status: "pending", limit: 5 }),
-        contributionsApi.list({ limit: 200 }),
-      ])
-      setSummary(summaryData)
-      setMembers(membersData.data)
-      setPendingLoansList(loansData.data)
-      setPendingLoansTotal(loansData.total ?? loansData.data.length)
-      setContributions(contributionsData.data)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load dashboard data")
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
-
   // Chart data from contributions
-  const chartData = useMemo(() => computeChartData(contributions, timeRange), [contributions, timeRange])
+  const chartData = useMemo(
+    () => computeChartData(contributions, timeRange),
+    [contributions, timeRange]
+  )
 
   const yAxisDomain = useMemo(() => {
     if (chartData.length === 0) return [0, 1000]
@@ -215,7 +233,10 @@ function DashboardPage() {
 
   // Filtered members (client-side filter on fetched data)
   const filteredMembers = useMemo(() => {
-    const filtered = filterStatus === "all" ? members : members.filter((m) => m.status === filterStatus)
+    const filtered =
+      filterStatus === "all"
+        ? members
+        : members.filter((m) => m.status === filterStatus)
     return filtered.slice(0, 5)
   }, [members, filterStatus])
 
@@ -240,45 +261,51 @@ function DashboardPage() {
     setEditingMember(member)
   }
 
-  const handleSaveMember = async () => {
+  const handleSaveMember = () => {
     if (!editingMember) return
-    try {
-      await membersApi.updateById(editingMember.id, { status: editingMember.status })
-      setMembers((prev) => prev.map((m) => (m.id === editingMember.id ? editingMember : m)))
-      showToast(`Member #${editingMember.id} updated successfully!`, "success")
-      setEditingMember(null)
-    } catch {
-      showToast("Failed to update member", "error")
-    }
+    const edited = editingMember
+    // The row updates the moment Save is pressed and Query reverts it if the
+    // server refuses, so the table never shows a status that did not stick.
+    updateMember.mutate(
+      { id: edited.id, data: { status: edited.status } },
+      {
+        onSuccess: () => {
+          setEditingMember(null)
+          showToast(`${edited.full_name} updated.`, "success")
+        },
+        onError: () => showToast("Failed to update member", "error"),
+      }
+    )
   }
 
-  const handleAddMember = async (data: { full_name: string; email: string; phone: string; address: string }) => {
-    try {
-      const newMember = await membersApi.create({
+  const handleAddMember = (data: {
+    full_name: string
+    email: string
+    phone: string
+    address: string
+  }) =>
+    // Guarded by the mutation's own pending flag as well as the disabled
+    // button: two submits would create two accounts.
+    createMember.mutate(
+      {
         email: data.email,
         password: "tempPassword123",
         full_name: data.full_name,
         phone: data.phone,
         address: data.address,
-      })
-      setMembers((prev) => [newMember, ...prev])
-      showToast(`Member ${data.full_name} added successfully!`, "success")
-      setShowAddMember(false)
-    } catch {
-      showToast("Failed to add member", "error")
-    }
-  }
+      },
+      {
+        onSuccess: () => {
+          showToast(`Member ${data.full_name} added successfully!`, "success")
+          setShowAddMember(false)
+        },
+        onError: () => showToast("Failed to add member", "error"),
+      }
+    )
 
-  const handleApproveLoan = async (loanId: string) => {
-    try {
-      await loansApi.process(loanId, { status: "approved" })
-      setPendingLoansList((prev) => prev.filter((l) => l.id !== loanId))
-      showToast(`Loan #${loanId} approved successfully!`, "success")
-    } catch {
-      showToast("Failed to approve loan", "error")
-    }
-  }
-
+  // Approval is no longer a one-click action: it needs terms and the signature
+  // of an office-holder (Part C), and a second officer after that. The
+  // dashboard sends the reviewer to the loan rather than pretending otherwise.
   const handleReviewLoan = (loanId: string) => {
     navigate({ to: "/loans", search: { id: loanId } })
   }
@@ -298,16 +325,18 @@ function DashboardPage() {
   const pendingLoanCount = pendingLoansTotal
   const activityList = useMemo(
     () => contributions.slice(0, 6).map(mapContributionActivity),
-    [contributions],
+    [contributions]
   )
 
   // --- Loading / Error states ---
+  //
+  // A single centred spinner used to gate the whole page. On the largest screen
+  // in the app that meant staring at nothing, then having every tile, chart and
+  // table arrive at once. The skeleton below mirrors the real four sections —
+  // header, stat tiles, chart + activity feed, members table + loan queue — so
+  // the shape is there from the first paint and nothing shifts when data lands.
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-24">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#003d9a] border-t-transparent" />
-      </div>
-    )
+    return <DashboardSkeleton />
   }
 
   if (error) {
@@ -315,7 +344,13 @@ function DashboardPage() {
       <div className="flex flex-col items-center justify-center gap-4 py-24">
         <p className="text-sm text-red-600">{error}</p>
         <button
-          onClick={fetchData}
+          onClick={() => {
+            // Refetch all four, not just one — any of them could be the failure.
+            summaryQuery.refetch()
+            membersQuery.refetch()
+            pendingLoansQuery.refetch()
+            contributionsQuery.refetch()
+          }}
           className="rounded-lg bg-[#003d9a] px-4 py-2 text-sm font-bold text-white"
         >
           Retry
@@ -476,7 +511,10 @@ function DashboardPage() {
               <>
                 <div className="space-y-4 sm:space-y-6">
                   {activityList.map((activity) => (
-                    <div key={activity.id} className="flex space-x-3 sm:space-x-4">
+                    <div
+                      key={activity.id}
+                      className="flex space-x-3 sm:space-x-4"
+                    >
                       <div
                         className={`mt-1 h-2 w-2 flex-shrink-0 rounded-full shadow-sm ${
                           activity.priority === "high"
@@ -502,7 +540,10 @@ function DashboardPage() {
                   className="mt-4 flex items-center justify-center text-sm font-bold text-[#003d9a] transition-all hover:underline sm:mt-6 dark:text-[#b2c5ff]"
                 >
                   View Full Logs
-                  <HugeiconsIcon icon={ArrowRight01Icon} className="ml-1 h-4 w-4" />
+                  <HugeiconsIcon
+                    icon={ArrowRight01Icon}
+                    className="ml-1 h-4 w-4"
+                  />
                 </button>
               </>
             )}
@@ -572,7 +613,9 @@ function DashboardPage() {
                     filteredMembers.map((member) => (
                       <TableRow
                         key={member.id}
-                        className="transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                        className={`transition-all hover:bg-slate-50 dark:hover:bg-slate-800/50 ${
+                          isMemberPending(member.id) ? "opacity-50" : ""
+                        }`}
                       >
                         <TableCell className="font-bold text-[#1e55be] dark:text-[#b2c5ff]">
                           #{member.id}
@@ -684,25 +727,25 @@ function DashboardPage() {
                       REQ #{loan.id}
                     </p>
                     <p className="text-sm font-medium text-[#191c1e] dark:text-white">
-                      ${(loan.amount ?? 0).toLocaleString()}.00{" "}
-                      {loan.type ? loan.type.charAt(0).toUpperCase() + loan.type.slice(1) : "Loan"}
+                      {formatNaira(
+                        loan.amount_approved ?? loan.amount_requested
+                      )}{" "}
+                      {loan.type
+                        ? loan.type.charAt(0).toUpperCase() + loan.type.slice(1)
+                        : "Loan"}
                     </p>
                     <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                      By: {loan.member_name}
+                      By: {loanMemberName(loan)}
                     </p>
                     {index === 0 && (
+                      // One action, not two: both used to navigate to the same
+                      // place once approval became a signing step.
                       <div className="mt-3 flex gap-2 sm:mt-4">
                         <button
-                          onClick={() => handleApproveLoan(loan.id)}
+                          onClick={() => handleReviewLoan(loan.id)}
                           className="flex-1 rounded-lg bg-[#003d9a] py-1.5 text-[10px] font-black text-white uppercase shadow-sm transition-all hover:brightness-110 sm:py-2"
                         >
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => handleReviewLoan(loan.id)}
-                          className="flex-1 rounded-lg border border-slate-200 bg-slate-50 py-1.5 text-[10px] font-black text-[#191c1e] uppercase transition-all hover:bg-slate-100 sm:py-2 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:hover:bg-slate-700"
-                        >
-                          Review
+                          Review &amp; Sign
                         </button>
                       </div>
                     )}
@@ -779,9 +822,10 @@ function DashboardPage() {
               </button>
               <button
                 onClick={handleSaveMember}
-                className="flex-1 rounded-lg bg-[#003d9a] py-2 text-sm font-bold text-white transition-colors hover:brightness-110"
+                disabled={isMemberPending(editingMember.id)}
+                className="flex-1 rounded-lg bg-[#003d9a] py-2 text-sm font-bold text-white transition-colors hover:brightness-110 disabled:opacity-50"
               >
-                Save Changes
+                {isMemberPending(editingMember.id) ? "Saving…" : "Save Changes"}
               </button>
             </div>
           </div>
@@ -791,6 +835,7 @@ function DashboardPage() {
       {/* Add Member Modal */}
       {showAddMember && (
         <AddMemberModal
+          submitting={addingMember}
           onClose={() => setShowAddMember(false)}
           onSubmit={handleAddMember}
         />
@@ -804,11 +849,18 @@ function DashboardPage() {
 
 // Add Member Modal Component
 function AddMemberModal({
+  submitting,
   onClose,
   onSubmit,
 }: {
+  submitting: boolean
   onClose: () => void
-  onSubmit: (data: { full_name: string; email: string; phone: string; address: string }) => void
+  onSubmit: (data: {
+    full_name: string
+    email: string
+    phone: string
+    address: string
+  }) => void
 }) {
   const [full_name, setFullName] = useState("")
   const [email, setEmail] = useState("")
@@ -817,6 +869,7 @@ function AddMemberModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    if (submitting) return
     if (!full_name || !email || !phone || !address) return
     onSubmit({ full_name, email, phone, address })
   }
@@ -898,9 +951,10 @@ function AddMemberModal({
             </button>
             <button
               type="submit"
-              className="flex-1 rounded-lg bg-[#003d9a] py-2 text-sm font-bold text-white transition-colors hover:brightness-110"
+              disabled={submitting}
+              className="flex-1 rounded-lg bg-[#003d9a] py-2 text-sm font-bold text-white transition-colors hover:brightness-110 disabled:opacity-50"
             >
-              Add Member
+              {submitting ? "Adding…" : "Add Member"}
             </button>
           </div>
         </form>
@@ -910,6 +964,78 @@ function AddMemberModal({
 }
 
 // Stat Card Component
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-6 sm:space-y-8 lg:space-y-10">
+      {/* Page header */}
+      <section className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-2">
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-4 w-80" />
+        </div>
+        <Skeleton className="h-10 w-40" />
+      </section>
+
+      {/* Key stats */}
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 lg:grid-cols-4">
+        {Array.from({ length: 4 }, (_, i) => (
+          <div
+            key={i}
+            className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-[#0b1326]"
+          >
+            <Skeleton className="mb-4 size-10 rounded-2xl" />
+            <Skeleton className="mb-2 h-3 w-24" />
+            <Skeleton className="h-7 w-32" />
+          </div>
+        ))}
+      </section>
+
+      {/* Chart + activity feed */}
+      <section className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-3 lg:gap-8">
+        <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm lg:col-span-2 dark:border-slate-700 dark:bg-[#0b1326]">
+          <Skeleton className="mb-6 h-5 w-48" />
+          <Skeleton className="h-64 w-full rounded-xl" />
+        </div>
+        <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-[#0b1326]">
+          <Skeleton className="mb-6 h-5 w-32" />
+          <div className="space-y-4">
+            {Array.from({ length: 4 }, (_, i) => (
+              <div key={i} className="flex items-start gap-3">
+                <Skeleton className="size-9 shrink-0 rounded-full" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-1/2" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Members table + loan queue */}
+      <section className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-4 lg:gap-8">
+        <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm lg:col-span-3 dark:border-slate-700 dark:bg-[#0b1326]">
+          <Skeleton className="mb-6 h-5 w-40" />
+          <div className="space-y-3">
+            {Array.from({ length: 6 }, (_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        </div>
+        <div className="rounded-3xl border border-slate-100 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-[#0b1326]">
+          <Skeleton className="mb-6 h-5 w-28" />
+          <div className="space-y-3">
+            {Array.from({ length: 3 }, (_, i) => (
+              <Skeleton key={i} className="h-20 w-full rounded-xl" />
+            ))}
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 function StatCard({
   icon,
   label,

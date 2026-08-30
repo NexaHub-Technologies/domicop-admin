@@ -24,16 +24,6 @@ export interface GetNotificationsParams {
   limit?: number
 }
 
-export interface RegisterDeviceInput {
-  token: string
-  platform: "ios" | "android"
-  device_name?: string
-}
-
-export interface UnregisterDeviceInput {
-  token: string
-}
-
 export interface NotificationPreferences {
   push_enabled: boolean
   categories: {
@@ -54,15 +44,6 @@ export interface UpdateNotificationPreferencesInput {
     security?: boolean
     meeting?: boolean
   }
-}
-
-export interface SendPushTestInput {
-  to: string
-  title: string
-  body: string
-  data?: Record<string, unknown>
-  sound?: string
-  priority?: "default" | "normal" | "high"
 }
 
 export interface BroadcastNotificationInput {

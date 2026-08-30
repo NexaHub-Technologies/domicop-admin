@@ -1,6 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { useState, useEffect, useCallback } from "react"
+import { useState, useMemo } from "react"
 import { dividendsApi } from "../../lib/api/dividends"
+import { useDividends } from "../../lib/queries"
+import { useQueryClient } from "@tanstack/react-query"
+import { createColumnHelper } from "@tanstack/react-table"
+import { DataTable, dataTableFeatures } from "../../components/data-table"
 import { ApiError } from "../../lib/http"
 import type {
   Dividend,
@@ -10,18 +14,9 @@ import { formatNaira } from "../../lib/money"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   CalculatorIcon,
-  Coins01Icon,
   CheckmarkCircle02Icon,
   CancelSquareIcon,
 } from "@hugeicons/core-free-icons"
@@ -31,17 +26,62 @@ export const Route = createFileRoute("/_authenticated/dividends")({
 })
 
 const statusStyles: Record<string, string> = {
+  pending: "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400",
   processing:
     "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
-  success: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+  success:
+    "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
   failed: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+}
+
+const helper = createColumnHelper<typeof dataTableFeatures, Dividend>()
+
+function useDividendColumns() {
+  return useMemo(
+    () =>
+      helper.columns([
+        helper.accessor((d) => d.profiles.full_name, {
+          id: "member",
+          header: "Member",
+          cell: ({ row }) => (
+            <div>
+              <p className="text-sm font-bold text-[#191c1e] dark:text-white">
+                {row.original.profiles.full_name}
+              </p>
+              <p className="text-xs text-slate-500">
+                {row.original.profiles.member_no}
+              </p>
+            </div>
+          ),
+        }),
+        helper.accessor("amount", {
+          header: "Amount",
+          cell: ({ getValue }) => (
+            <span className="font-bold text-[#191c1e] dark:text-white">
+              {formatNaira(Number(getValue()))}
+            </span>
+          ),
+        }),
+        helper.accessor("status", {
+          header: "Status",
+          cell: ({ getValue }) => (
+            <div className="text-right">
+              <Badge
+                variant="outline"
+                className={`text-[10px] font-black uppercase ${statusStyles[getValue() as string] ?? ""}`}
+              >
+                {getValue()}
+              </Badge>
+            </div>
+          ),
+        }),
+      ]),
+    []
+  )
 }
 
 function DividendsPage() {
   const [year, setYear] = useState(new Date().getFullYear())
-  const [dividends, setDividends] = useState<Dividend[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
 
   const [poolAmount, setPoolAmount] = useState<number>(0)
   const [preview, setPreview] = useState<PreviewDividendResponse | null>(null)
@@ -57,22 +97,20 @@ function DividendsPage() {
     setTimeout(() => setToast(null), 5000)
   }
 
-  const fetchData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await dividendsApi.list({ year })
-      setDividends(res.data)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load dividends")
-    } finally {
-      setLoading(false)
-    }
-  }, [year])
-
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
+  const columns = useDividendColumns()
+  const dividendsQuery = useDividends(year)
+  const dividends = dividendsQuery.data?.data ?? []
+  const loading = dividendsQuery.isPending
+  const error = dividendsQuery.error
+    ? dividendsQuery.error instanceof Error
+      ? dividendsQuery.error.message
+      : "Failed to load dividends"
+    : null
+  const queryClient = useQueryClient()
+  // Distribution writes many rows at once, so it refetches rather than
+  // guessing — there is nothing predictable to patch optimistically.
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: ["dividends"] })
 
   const handlePreview = async () => {
     if (poolAmount <= 0) return
@@ -84,7 +122,7 @@ function DividendsPage() {
     } catch (err) {
       showToast(
         err instanceof ApiError ? err.message : "Failed to compute preview",
-        "error",
+        "error"
       )
     } finally {
       setPreviewing(false)
@@ -103,27 +141,30 @@ function DividendsPage() {
         })),
       })
       const processing = res.results.filter(
-        (r) => r.status === "processing",
+        (r) => r.status === "processing"
       ).length
       const failed = res.results.filter((r) => r.status === "failed").length
       showToast(
         `Distribution started: ${processing} processing, ${failed} failed.`,
-        failed > 0 ? "error" : "success",
+        failed > 0 ? "error" : "success"
       )
       setPreview(null)
       setPoolAmount(0)
-      fetchData()
+      refresh()
     } catch (err) {
       showToast(
         err instanceof ApiError ? err.message : "Failed to distribute",
-        "error",
+        "error"
       )
     } finally {
       setDistributing(false)
     }
   }
 
-  const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i)
+  const years = Array.from(
+    { length: 5 },
+    (_, i) => new Date().getFullYear() - i
+  )
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -136,9 +177,15 @@ function DividendsPage() {
           }`}
         >
           {toast.type === "success" ? (
-            <HugeiconsIcon icon={CheckmarkCircle02Icon} className="h-5 w-5 shrink-0" />
+            <HugeiconsIcon
+              icon={CheckmarkCircle02Icon}
+              className="h-5 w-5 shrink-0"
+            />
           ) : (
-            <HugeiconsIcon icon={CancelSquareIcon} className="h-5 w-5 shrink-0" />
+            <HugeiconsIcon
+              icon={CancelSquareIcon}
+              className="h-5 w-5 shrink-0"
+            />
           )}
           <span className="text-sm font-medium">{toast.message}</span>
         </div>
@@ -212,7 +259,8 @@ function DividendsPage() {
                     {formatNaira(preview.total_amount)} pool
                   </span>
                   <span className="text-xs text-slate-400">
-                    total contrib {formatNaira(preview.grand_total_contributions)}
+                    total contrib{" "}
+                    {formatNaira(preview.grand_total_contributions)}
                   </span>
                 </div>
                 <div className="max-h-64 space-y-2 overflow-y-auto">
@@ -226,7 +274,8 @@ function DividendsPage() {
                           {p.full_name}
                         </p>
                         <p className="text-xs text-slate-400">
-                          {p.member_no} · contrib {formatNaira(p.contribution_amount)}
+                          {p.member_no} · contrib{" "}
+                          {formatNaira(p.contribution_amount)}
                         </p>
                       </div>
                       <p className="text-sm font-bold text-green-600">
@@ -262,68 +311,14 @@ function DividendsPage() {
           </CardHeader>
           <CardContent className="p-0">
             <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-slate-50/50 hover:bg-slate-50/50 dark:bg-slate-800/50 dark:hover:bg-slate-800/50">
-                    <TableHead className="text-[10px] font-black tracking-widest uppercase">
-                      Member
-                    </TableHead>
-                    <TableHead className="text-[10px] font-black tracking-widest uppercase">
-                      Amount
-                    </TableHead>
-                    <TableHead className="text-right text-[10px] font-black tracking-widest uppercase">
-                      Status
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {loading ? (
-                    <TableRow>
-                      <TableCell colSpan={3} className="py-8 text-center text-slate-500">
-                        Loading…
-                      </TableCell>
-                    </TableRow>
-                  ) : error ? (
-                    <TableRow>
-                      <TableCell colSpan={3} className="py-8 text-center text-red-500">
-                        {error}
-                      </TableCell>
-                    </TableRow>
-                  ) : dividends.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={3} className="py-8 text-center text-slate-500">
-                        <HugeiconsIcon
-                          icon={Coins01Icon}
-                          className="mx-auto mb-2 h-8 w-8 text-slate-300"
-                        />
-                        No dividends recorded for {year}.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    dividends.map((d) => (
-                      <TableRow key={d.id}>
-                        <TableCell>
-                          <p className="text-sm font-bold text-[#191c1e] dark:text-white">
-                            {d.profiles.full_name}
-                          </p>
-                          <p className="text-xs text-slate-500">{d.profiles.member_no}</p>
-                        </TableCell>
-                        <TableCell className="font-bold text-[#191c1e] dark:text-white">
-                          {formatNaira(d.amount)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Badge
-                            variant="outline"
-                            className={`text-[10px] font-black uppercase ${statusStyles[d.status] ?? ""}`}
-                          >
-                            {d.status}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+              <DataTable
+                columns={columns}
+                data={dividends}
+                loading={loading}
+                error={error}
+                emptyMessage={`No dividends recorded for ${year}.`}
+                skeletonWidths={["h-8 w-40", "h-4 w-24", "h-5 w-20"]}
+              />
             </div>
           </CardContent>
         </Card>

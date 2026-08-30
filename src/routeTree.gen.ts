@@ -16,6 +16,7 @@ import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedSupportRouteImport } from './routes/_authenticated/support'
 import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
+import { Route as AuthenticatedRegistrationRouteImport } from './routes/_authenticated/registration'
 import { Route as AuthenticatedMembersRouteImport } from './routes/_authenticated/members'
 import { Route as AuthenticatedLogsRouteImport } from './routes/_authenticated/logs'
 import { Route as AuthenticatedLoansRouteImport } from './routes/_authenticated/loans'
@@ -62,6 +63,12 @@ const AuthenticatedSettingsRoute = AuthenticatedSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedRegistrationRoute =
+  AuthenticatedRegistrationRouteImport.update({
+    id: '/registration',
+    path: '/registration',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedMembersRoute = AuthenticatedMembersRouteImport.update({
   id: '/members',
   path: '/members',
@@ -137,6 +144,7 @@ export interface FileRoutesByFullPath {
   '/loans': typeof AuthenticatedLoansRoute
   '/logs': typeof AuthenticatedLogsRoute
   '/members': typeof AuthenticatedMembersRouteWithChildren
+  '/registration': typeof AuthenticatedRegistrationRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/support': typeof AuthenticatedSupportRoute
   '/members/$memberId': typeof AuthenticatedMembersMemberIdRoute
@@ -156,6 +164,7 @@ export interface FileRoutesByTo {
   '/loans': typeof AuthenticatedLoansRoute
   '/logs': typeof AuthenticatedLogsRoute
   '/members': typeof AuthenticatedMembersRouteWithChildren
+  '/registration': typeof AuthenticatedRegistrationRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/support': typeof AuthenticatedSupportRoute
   '/members/$memberId': typeof AuthenticatedMembersMemberIdRoute
@@ -177,6 +186,7 @@ export interface FileRoutesById {
   '/_authenticated/loans': typeof AuthenticatedLoansRoute
   '/_authenticated/logs': typeof AuthenticatedLogsRoute
   '/_authenticated/members': typeof AuthenticatedMembersRouteWithChildren
+  '/_authenticated/registration': typeof AuthenticatedRegistrationRoute
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/_authenticated/support': typeof AuthenticatedSupportRoute
   '/_authenticated/members/$memberId': typeof AuthenticatedMembersMemberIdRoute
@@ -198,6 +208,7 @@ export interface FileRouteTypes {
     | '/loans'
     | '/logs'
     | '/members'
+    | '/registration'
     | '/settings'
     | '/support'
     | '/members/$memberId'
@@ -217,6 +228,7 @@ export interface FileRouteTypes {
     | '/loans'
     | '/logs'
     | '/members'
+    | '/registration'
     | '/settings'
     | '/support'
     | '/members/$memberId'
@@ -237,6 +249,7 @@ export interface FileRouteTypes {
     | '/_authenticated/loans'
     | '/_authenticated/logs'
     | '/_authenticated/members'
+    | '/_authenticated/registration'
     | '/_authenticated/settings'
     | '/_authenticated/support'
     | '/_authenticated/members/$memberId'
@@ -299,6 +312,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof AuthenticatedSettingsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/registration': {
+      id: '/_authenticated/registration'
+      path: '/registration'
+      fullPath: '/registration'
+      preLoaderRoute: typeof AuthenticatedRegistrationRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/members': {
@@ -403,6 +423,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedLoansRoute: typeof AuthenticatedLoansRoute
   AuthenticatedLogsRoute: typeof AuthenticatedLogsRoute
   AuthenticatedMembersRoute: typeof AuthenticatedMembersRouteWithChildren
+  AuthenticatedRegistrationRoute: typeof AuthenticatedRegistrationRoute
   AuthenticatedSettingsRoute: typeof AuthenticatedSettingsRoute
   AuthenticatedSupportRoute: typeof AuthenticatedSupportRoute
 }
@@ -418,6 +439,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedLoansRoute: AuthenticatedLoansRoute,
   AuthenticatedLogsRoute: AuthenticatedLogsRoute,
   AuthenticatedMembersRoute: AuthenticatedMembersRouteWithChildren,
+  AuthenticatedRegistrationRoute: AuthenticatedRegistrationRoute,
   AuthenticatedSettingsRoute: AuthenticatedSettingsRoute,
   AuthenticatedSupportRoute: AuthenticatedSupportRoute,
 }

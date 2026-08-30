@@ -15,6 +15,7 @@ import {
   Moon02Icon,
   Coins01Icon,
   Megaphone01Icon,
+  UserAdd01Icon,
 } from "@hugeicons/core-free-icons"
 
 import {
@@ -36,6 +37,7 @@ import { Logo } from "./logo"
 const navItems = [
   { label: "Dashboard", path: "/dashboard", icon: DashboardSquare01Icon },
   { label: "Members", path: "/members", icon: UserGroupIcon },
+  { label: "Registration", path: "/registration", icon: UserAdd01Icon },
   { label: "Contributions", path: "/contributions", icon: MoneySend01Icon },
   { label: "Loans", path: "/loans", icon: BankIcon },
   { label: "Dividends", path: "/dividends", icon: Coins01Icon },

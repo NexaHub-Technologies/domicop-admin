@@ -7,6 +7,12 @@ export interface AdminProfile {
   phone: string | null
   avatar_url: string | null
   is_super_admin: boolean
+  /**
+   * Cooperative office held, if any. Distinct from is_super_admin: only the
+   * secretary and the president may sign a loan (Part C), and most admins
+   * hold neither office.
+   */
+  officer_role: "secretary" | "president" | null
   created_at: string
 }
 

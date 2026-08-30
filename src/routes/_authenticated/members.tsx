@@ -1,21 +1,21 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router"
-import { useState, useMemo, useEffect, useCallback } from "react"
-import { membersApi } from "../../lib/api/members"
+import { useState, useMemo } from "react"
 import { notificationsApi } from "../../lib/api/notifications"
 import { ApiError } from "../../lib/http"
 import type { Member } from "../../lib/types/auth"
 import type { CreateMemberInput } from "../../lib/types/members"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { createColumnHelper } from "@tanstack/react-table"
+import { DataTable, dataTableFeatures } from "../../components/data-table"
 import { Button } from "@/components/ui/button"
+import {
+  useMembers,
+  usePendingApplications,
+  useApproveMember,
+  useUpdateMember,
+  useCreateMember,
+} from "../../lib/queries"
 import {
   ChartContainer,
   ChartTooltip,
@@ -81,16 +81,139 @@ function computeGrowth(members: Member[]) {
   })
 }
 
+const helper = createColumnHelper<typeof dataTableFeatures, Member>()
+
+/**
+ * Columns are built once per page render and memoised — a fresh array each
+ * render re-creates the table instance and loses its sorting state.
+ */
+function useMemberColumns(
+  onApprove: (id: string) => void,
+  onEdit: (m: Member) => void,
+  isPending: (id: string) => boolean
+) {
+  return useMemo(
+    () =>
+      helper.columns([
+        helper.accessor("member_no", {
+          header: "Member No",
+          cell: ({ getValue }) => (
+            <span className="font-bold text-[#1e55be] dark:text-[#b2c5ff]">
+              {getValue() || "—"}
+            </span>
+          ),
+        }),
+        helper.accessor("full_name", {
+          header: "Member",
+          cell: ({ row }) => (
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-600 sm:h-10 sm:w-10 dark:bg-slate-700 dark:text-slate-400">
+                {getInitials(row.original.full_name)}
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-bold text-[#191c1e] dark:text-white">
+                  {row.original.full_name}
+                </p>
+                <p className="hidden truncate text-xs text-slate-500 sm:block dark:text-slate-400">
+                  {row.original.email}
+                </p>
+              </div>
+            </div>
+          ),
+        }),
+        helper.accessor("status", {
+          header: "Status",
+          cell: ({ getValue }) => {
+            const status = getValue()
+            return (
+              <Badge
+                variant={
+                  status === "active"
+                    ? "default"
+                    : status === "pending"
+                      ? "secondary"
+                      : "outline"
+                }
+                className={`text-[10px] font-black uppercase ${
+                  status === "active"
+                    ? "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400"
+                    : status === "pending"
+                      ? "bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400"
+                      : "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400"
+                }`}
+              >
+                {status}
+              </Badge>
+            )
+          },
+        }),
+        helper.accessor("phone", {
+          header: "Phone",
+          cell: ({ getValue }) => (
+            <span className="text-sm text-slate-600 dark:text-slate-400">
+              {getValue() || "—"}
+            </span>
+          ),
+        }),
+        helper.accessor("created_at", {
+          header: "Joined",
+          cell: ({ getValue }) => (
+            <span className="text-sm text-slate-500 dark:text-slate-400">
+              {new Date(getValue()).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })}
+            </span>
+          ),
+        }),
+        helper.display({
+          id: "actions",
+          header: "",
+          cell: ({ row }) => {
+            const member = row.original
+            return (
+              <div className="flex justify-end gap-1">
+                {member.status === "pending" && (
+                  <button
+                    onClick={() => onApprove(member.id)}
+                    disabled={isPending(member.id)}
+                    title="Approve member"
+                    className="p-1 text-slate-400 transition-colors hover:text-green-600 disabled:opacity-40 sm:p-2"
+                  >
+                    <HugeiconsIcon
+                      icon={CheckmarkCircle02Icon}
+                      className="h-5 w-5"
+                    />
+                  </button>
+                )}
+                <Link
+                  to="/members/$memberId"
+                  params={{ memberId: member.id }}
+                  className="p-1 text-slate-400 transition-colors hover:text-[#003d9a] sm:p-2 dark:hover:text-[#b2c5ff]"
+                >
+                  <HugeiconsIcon icon={ViewIcon} className="h-5 w-5" />
+                </Link>
+                <button
+                  onClick={() => onEdit(member)}
+                  className="p-1 text-slate-400 transition-colors hover:text-[#003d9a] sm:p-2 dark:hover:text-[#b2c5ff]"
+                >
+                  <HugeiconsIcon icon={PencilEdit01Icon} className="h-5 w-5" />
+                </button>
+              </div>
+            )
+          },
+        }),
+      ]),
+    [onApprove, onEdit, isPending]
+  )
+}
+
 function MembersPage() {
   const navigate = useNavigate()
-  const [members, setMembers] = useState<Member[]>([])
-  const [total, setTotal] = useState<number | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
+  const [page, setPage] = useState(1)
   const [filter, setFilter] = useState<StatusFilter>("all")
   const [search, setSearch] = useState("")
-  const [page, setPage] = useState(1)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingMember, setEditingMember] = useState<Member | null>(null)
   const [showBroadcastModal, setShowBroadcastModal] = useState(false)
@@ -104,28 +227,46 @@ function MembersPage() {
     setTimeout(() => setToast(null), 3000)
   }
 
-  const fetchData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await membersApi.list({ page, limit: PAGE_SIZE })
-      setMembers(res.data)
-      setTotal(res.total)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load members")
-    } finally {
-      setLoading(false)
-    }
-  }, [page])
+  // Two reads, both cached and de-duplicated by Query: the page being browsed,
+  // and the whole approval queue. The queue drives the count and the "pending"
+  // filter, which were previously derived from whichever 25 rows happened to
+  // be loaded.
+  const membersQuery = useMembers(page, PAGE_SIZE)
+  const pendingQuery = usePendingApplications()
 
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
+  const members = membersQuery.data?.data ?? []
+  const total = membersQuery.data?.total ?? null
+  const loading = membersQuery.isPending
+  const error = membersQuery.error
+    ? membersQuery.error instanceof Error
+      ? membersQuery.error.message
+      : "Failed to load members"
+    : null
 
-  // Client-side search + status filter over the loaded page.
+  const pendingApplications = pendingQuery.data ?? []
+  const pendingUnavailable = pendingQuery.isError
+
+  const approveMember = useApproveMember()
+  const updateMember = useUpdateMember()
+  const createMember = useCreateMember()
+  const isPending = (id: string) =>
+    (approveMember.isPending && approveMember.variables === id) ||
+    (updateMember.isPending && updateMember.variables?.id === id)
+
+  const columns = useMemberColumns(
+    (id) => handleApprove(id),
+    (m) => setEditingMember(m),
+    (id) => isPending(id)
+  )
+
+  // Search and status filter. "pending" reads the full queue rather than the
+  // loaded page, so every applicant is reachable; the other filters stay
+  // page-scoped because they browse rather than work a queue.
   const filteredMembers = useMemo(() => {
-    let result = members
-    if (filter !== "all") result = result.filter((m) => m.status === filter)
+    let result = filter === "pending" ? pendingApplications : members
+    if (filter !== "all" && filter !== "pending") {
+      result = result.filter((m) => m.status === filter)
+    }
     if (search.trim()) {
       const q = search.toLowerCase()
       result = result.filter(
@@ -136,59 +277,63 @@ function MembersPage() {
       )
     }
     return result
-  }, [members, filter, search])
+  }, [members, pendingApplications, filter, search])
 
   const growthData = useMemo(() => computeGrowth(members), [members])
-  const pendingCount = useMemo(
-    () => members.filter((m) => m.status === "pending").length,
-    [members]
-  )
+  const pendingCount = pendingApplications.length
   const totalPages = total ? Math.ceil(total / PAGE_SIZE) : 1
+  // The pending queue arrives whole, so paging through it would be meaningless.
+  const paginated = filter !== "pending"
 
-  const handleCreateMember = async (input: CreateMemberInput) => {
-    try {
-      await membersApi.create(input)
-      showToast(`Member ${input.full_name} created.`, "success")
-      setShowCreateModal(false)
-      fetchData()
-    } catch (err) {
-      showToast(
-        err instanceof ApiError ? err.message : "Failed to create member",
-        "error"
-      )
-    }
-  }
+  const handleCreateMember = (input: CreateMemberInput) =>
+    createMember.mutate(input, {
+      onSuccess: () => {
+        showToast(`Member ${input.full_name} created.`, "success")
+        setShowCreateModal(false)
+      },
+      onError: (err) =>
+        showToast(
+          err instanceof ApiError ? err.message : "Failed to create member",
+          "error"
+        ),
+    })
 
-  const handleUpdateMember = async (
+  const handleUpdateMember = (
     id: string,
     data: { status?: Member["status"]; member_no?: string }
-  ) => {
-    try {
-      await membersApi.updateById(id, data)
-      showToast("Member updated.", "success")
-      setEditingMember(null)
-      fetchData()
-    } catch (err) {
-      showToast(
-        err instanceof ApiError ? err.message : "Failed to update member",
-        "error"
-      )
-    }
-  }
+  ) =>
+    updateMember.mutate(
+      { id, data },
+      {
+        onSuccess: () => {
+          showToast("Member updated.", "success")
+          setEditingMember(null)
+        },
+        onError: (err) =>
+          showToast(
+            err instanceof ApiError ? err.message : "Failed to update member",
+            "error"
+          ),
+      }
+    )
 
-  const handleApprove = async (id: string) => {
-    try {
-      await membersApi.approve(id)
-      showToast("Member approved and assigned a member number.", "success")
-      setEditingMember(null)
-      fetchData()
-    } catch (err) {
-      showToast(
-        err instanceof ApiError ? err.message : "Failed to approve member",
-        "error"
-      )
-    }
-  }
+  const handleApprove = (id: string) =>
+    approveMember.mutate(id, {
+      onSuccess: (approved) => {
+        setEditingMember(null)
+        showToast(
+          approved.member_no
+            ? `Member approved as ${approved.member_no}. They have been notified.`
+            : "Member approved. They have been notified.",
+          "success"
+        )
+      },
+      onError: (err) =>
+        showToast(
+          err instanceof ApiError ? err.message : "Failed to approve member",
+          "error"
+        ),
+    })
 
   const handleBroadcast = async (title: string, body: string) => {
     try {
@@ -288,187 +433,83 @@ function MembersPage() {
         </div>
       </Card>
 
-      {/* Members Table */}
+      {/* Members Table — TanStack Table owns sorting; the server owns paging,
+          so no pageSize is passed and the controls below stay in charge. */}
       <Card className="overflow-hidden">
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-slate-50/50 hover:bg-slate-50/50 dark:bg-slate-800/50 dark:hover:bg-slate-800/50">
-                  <TableHead className="w-[140px] text-[10px] font-black tracking-widest uppercase">
-                    Member No
-                  </TableHead>
-                  <TableHead className="text-[10px] font-black tracking-widest uppercase">
-                    Identity
-                  </TableHead>
-                  <TableHead className="text-[10px] font-black tracking-widest uppercase">
-                    Status
-                  </TableHead>
-                  <TableHead className="hidden text-[10px] font-black tracking-widest uppercase sm:table-cell">
-                    Phone
-                  </TableHead>
-                  <TableHead className="hidden text-[10px] font-black tracking-widest uppercase md:table-cell">
-                    Joined
-                  </TableHead>
-                  <TableHead className="text-right text-[10px] font-black tracking-widest uppercase">
-                    Actions
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {loading ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={6}
-                      className="py-8 text-center text-slate-500"
-                    >
-                      Loading members…
-                    </TableCell>
-                  </TableRow>
-                ) : error ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={6}
-                      className="py-8 text-center text-red-500"
-                    >
-                      {error}
-                    </TableCell>
-                  </TableRow>
-                ) : filteredMembers.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={6}
-                      className="py-8 text-center text-slate-500"
-                    >
-                      No members found
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredMembers.map((member) => (
-                    <TableRow
-                      key={member.id}
-                      className="transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                    >
-                      <TableCell className="font-bold text-[#1e55be] dark:text-[#b2c5ff]">
-                        {member.member_no || "—"}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2 sm:gap-3">
-                          <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-600 sm:h-10 sm:w-10 dark:bg-slate-700 dark:text-slate-400">
-                            {getInitials(member.full_name)}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-bold text-[#191c1e] dark:text-white">
-                              {member.full_name}
-                            </p>
-                            <p className="hidden truncate text-xs text-slate-500 sm:block dark:text-slate-400">
-                              {member.email}
-                            </p>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={
-                            member.status === "active"
-                              ? "default"
-                              : member.status === "pending"
-                                ? "secondary"
-                                : "outline"
-                          }
-                          className={`text-[10px] font-black uppercase ${
-                            member.status === "active"
-                              ? "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400"
-                              : member.status === "pending"
-                                ? "bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400"
-                                : "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400"
-                          }`}
-                        >
-                          {member.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="hidden text-sm text-slate-600 sm:table-cell dark:text-slate-400">
-                        {member.phone || "—"}
-                      </TableCell>
-                      <TableCell className="hidden text-sm text-slate-500 md:table-cell dark:text-slate-400">
-                        {new Date(member.created_at).toLocaleDateString(
-                          "en-US",
-                          { month: "short", day: "numeric", year: "numeric" }
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          {member.status === "pending" && (
-                            <button
-                              onClick={() => handleApprove(member.id)}
-                              title="Approve member"
-                              className="p-1 text-slate-400 transition-colors hover:text-green-600 sm:p-2"
-                            >
-                              <HugeiconsIcon
-                                icon={CheckmarkCircle02Icon}
-                                className="h-5 w-5"
-                              />
-                            </button>
-                          )}
-                          <Link
-                            to="/members/$memberId"
-                            params={{ memberId: member.id }}
-                            className="p-1 text-slate-400 transition-colors hover:text-[#003d9a] sm:p-2 dark:hover:text-[#b2c5ff]"
-                          >
-                            <HugeiconsIcon
-                              icon={ViewIcon}
-                              className="h-5 w-5"
-                            />
-                          </Link>
-                          <button
-                            onClick={() => setEditingMember(member)}
-                            className="p-1 text-slate-400 transition-colors hover:text-[#003d9a] sm:p-2 dark:hover:text-[#b2c5ff]"
-                          >
-                            <HugeiconsIcon
-                              icon={PencilEdit01Icon}
-                              className="h-5 w-5"
-                            />
-                          </button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
+        <CardContent className="p-2 sm:p-4">
+          <DataTable
+            columns={columns}
+            data={filteredMembers}
+            loading={loading}
+            error={error}
+            emptyMessage={
+              filter === "pending"
+                ? pendingUnavailable
+                  ? "Pending applications could not be loaded."
+                  : "No applications are waiting for approval."
+                : "No members found"
+            }
+            rowClassName={(m) => (isPending(m.id) ? "opacity-50" : "")}
+            skeletonWidths={[
+              "h-4 w-24",
+              "h-8 w-40",
+              "h-5 w-16",
+              "h-4 w-24",
+              "h-4 w-20",
+              "h-4 w-16",
+            ]}
+          />
         </CardContent>
       </Card>
 
-      {/* Pagination */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          Page {page}
-          {total !== null ? ` of ${totalPages} · ${total} members` : ""}
-        </p>
-        <div className="flex gap-2">
+      {/* Pagination — replaced by a queue summary while viewing pending
+          applications, which arrive as one unpaginated list. */}
+      {paginated ? (
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Page {page}
+            {total !== null ? ` of ${totalPages} · ${total} members` : ""}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              variant="outline"
+              size="sm"
+              disabled={page === 1 || loading}
+              className="text-xs sm:text-sm"
+            >
+              <HugeiconsIcon icon={ArrowLeft01Icon} className="mr-1 h-4 w-4" />
+              Previous
+            </Button>
+            <Button
+              onClick={() => setPage((p) => p + 1)}
+              variant="outline"
+              size="sm"
+              disabled={page >= totalPages || loading}
+              className="text-xs sm:text-sm"
+            >
+              Next
+              <HugeiconsIcon icon={ArrowRight01Icon} className="ml-1 h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            {pendingUnavailable
+              ? "Pending applications could not be loaded."
+              : `Showing all ${pendingCount} pending application${pendingCount === 1 ? "" : "s"}, oldest first.`}
+          </p>
           <Button
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            onClick={() => setFilter("all")}
             variant="outline"
             size="sm"
-            disabled={page === 1 || loading}
             className="text-xs sm:text-sm"
           >
-            <HugeiconsIcon icon={ArrowLeft01Icon} className="mr-1 h-4 w-4" />
-            Previous
-          </Button>
-          <Button
-            onClick={() => setPage((p) => p + 1)}
-            variant="outline"
-            size="sm"
-            disabled={page >= totalPages || loading}
-            className="text-xs sm:text-sm"
-          >
-            Next
-            <HugeiconsIcon icon={ArrowRight01Icon} className="ml-1 h-4 w-4" />
+            Back to all members
           </Button>
         </div>
-      </div>
+      )}
 
       {/* Growth + Quick Actions */}
       <section className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2">
@@ -519,7 +560,8 @@ function MembersPage() {
                 className="w-full bg-white/10 text-white hover:bg-white/20"
               >
                 <HugeiconsIcon icon={Task01Icon} className="mr-2 h-4 w-4" />
-                Pending Applications ({pendingCount})
+                Pending Applications{" "}
+                {pendingUnavailable ? "" : `(${pendingCount})`}
               </Button>
               <Button
                 onClick={() => setShowBroadcastModal(true)}
